@@ -11,6 +11,20 @@ def get_db_connection():
     return conn
 
 def init_db():
+    """
+    Initialize database schema (DEPRECATED).
+    
+    WARNING: This function is deprecated. Use database migrations instead:
+        - Run `make migrate-up` to apply migrations
+        - Run `make migrate-down` to rollback migrations
+        - Run `make migrate-status` to check migration status
+    
+    This function is kept for backward compatibility only.
+    """
+    print("WARNING: init_db() is deprecated. Please use migrations instead:")
+    print("  Run: make migrate-up")
+    print()
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     

@@ -1,4 +1,4 @@
-.PHONY: help install test lint clean run server ui view-db verify-graph create-dummies
+.PHONY: help install test lint clean run server ui view-db verify-graph create-dummies migrate-up migrate-down migrate-status
 
 # Default target
 help:
@@ -12,6 +12,9 @@ help:
 	@echo "  make view-db         - View database contents"
 	@echo "  make verify-graph    - Verify LangGraph workflow"
 	@echo "  make create-dummies  - Create dummy resume files"
+	@echo "  make migrate-up      - Apply pending database migrations"
+	@echo "  make migrate-down    - Rollback last database migration"
+	@echo "  make migrate-status  - Show migration status"
 	@echo "  make clean           - Remove cache files"
 
 # Install dependencies
@@ -70,6 +73,19 @@ verify-graph:
 create-dummies:
 	@echo "Creating dummy resume files..."
 	./venv/bin/python scripts/create_dummies.py
+
+# Database migrations
+migrate-up:
+	@echo "Applying database migrations..."
+	./venv/bin/python migrations/migrate.py up
+
+migrate-down:
+	@echo "Rolling back last migration..."
+	./venv/bin/python migrations/migrate.py down
+
+migrate-status:
+	@echo "Checking migration status..."
+	./venv/bin/python migrations/migrate.py status
 
 # Clean cache files
 clean:
