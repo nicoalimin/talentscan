@@ -7,7 +7,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
-from database import add_candidate, get_candidate_by_filename
+from src.database import add_candidate, get_candidate_by_filename
+
 
 # Define Pydantic model for structured output
 class WorkExperience(BaseModel):

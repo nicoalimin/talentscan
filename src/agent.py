@@ -1,6 +1,7 @@
 from typing import List, Dict
-from database import get_all_candidates
+from src.database import get_all_candidates
 import json
+
 
 class ResumeScreeningAgent:
     def __init__(self):

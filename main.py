@@ -1,8 +1,9 @@
 import os
 import argparse
-from processor import process_resumes
-from agent import ResumeScreeningAgent
-from database import init_db
+from src.processor import process_resumes
+from src.agent import ResumeScreeningAgent
+from src.database import init_db
+
 
 def main():
     parser = argparse.ArgumentParser(description="Resume Screening Agent")
@@ -20,8 +21,9 @@ def main():
     if args.server:
         import uvicorn
         print("Starting API server...")
-        uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+        uvicorn.run("src.api:app", host="0.0.0.0", port=8000, reload=True)
         return
+
     
     # Process resumes
     print(f"Scanning for resumes in {args.resumes_dir}...")

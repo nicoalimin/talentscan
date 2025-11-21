@@ -1,14 +1,15 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
-from agent import ResumeScreeningAgent
-from processor import process_resumes
-from database import get_all_candidates, init_db
+from src.agent import ResumeScreeningAgent
+from src.processor import process_resumes
+from src.database import get_all_candidates, init_db
 import os
 
 app = FastAPI(title="Resume Screening Agent API")
 
 # Initialize DB on startup
+
 @app.on_event("startup")
 def startup_event():
     init_db()

@@ -1,5 +1,10 @@
-from graph import app_graph
-from database import init_db
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from src.graph import app_graph
+from src.database import init_db
+
 
 def verify_graph():
     init_db()

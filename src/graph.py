@@ -1,8 +1,9 @@
 from typing import TypedDict, List, Dict, Optional
 from langgraph.graph import StateGraph, END
-from agent import ResumeScreeningAgent
-from processor import process_resumes
+from src.agent import ResumeScreeningAgent
+from src.processor import process_resumes
 import os
+
 
 class AgentState(TypedDict):
     messages: List[str]

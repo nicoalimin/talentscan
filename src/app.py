@@ -1,9 +1,10 @@
 import chainlit as cl
-from graph import app_graph
-from database import init_db
+from src.graph import app_graph
+from src.database import init_db
 
 # Initialize DB
 init_db()
+
 
 @cl.on_chat_start
 async def start():
