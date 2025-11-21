@@ -10,22 +10,23 @@ init_db()
 async def start():
     settings = await cl.ChatSettings(
         [
-            cl.input_widget.TextInput(id="role", label="Role", initial="Backend Engineer"),
+            cl.input_widget.TextInput(id="role", label="Role", placeholder="e.g., Backend Engineer"),
             cl.input_widget.Select(
                 id="seniority",
                 label="Seniority",
                 values=["Junior", "Mid", "Senior", "Lead", "Manager"],
-                initial="Senior",
             ),
-            cl.input_widget.TextInput(id="tech_stack", label="Tech Stack", initial="Python, Django, AWS"),
+            cl.input_widget.TextInput(id="tech_stack", label="Tech Stack", placeholder="e.g., Python, Django, AWS"),
         ]
     ).send()
     
     await cl.Message(
-        content="Welcome to the Resume Screening Agent (LangGraph Edition)! \n\n"
-                "Please configure the screening criteria in the settings panel.\n"
-                "Type **'process'** to scan the `resumes/` folder.\n"
-                "Type **'screen'** to screen candidates based on your settings."
+        content="Welcome to the Resume Screening Agent! 🎯\n\n"
+                "I can help you screen candidates based on specific criteria.\n\n"
+                "You can either:\n"
+                "1. **Configure settings** in the panel and type 'screen' to search\n"
+                "2. **Tell me what you need** in natural language (e.g., 'Find me senior backend engineers with Python and AWS experience')\n\n"
+                "Type **'process'** first if you have new resumes to scan."
     ).send()
 
 @cl.on_settings_update
@@ -37,21 +38,63 @@ async def update_settings(settings):
 async def main(message: cl.Message):
     content = message.content.lower().strip()
     
-    role = cl.user_session.get("role", "Backend Engineer")
-    seniority = cl.user_session.get("seniority", "Senior")
-    tech_stack = cl.user_session.get("tech_stack", "Python, Django, AWS")
-    
-    next_action = None
+    # Handle process command
     if content == "process":
-        next_action = "process"
         await cl.Message(content="Scanning resumes...").send()
-    elif content == "screen":
-        next_action = "screen"
-        await cl.Message(content="Screening candidates...").send()
-    else:
-        await cl.Message(content="I didn't understand that. Type **'process'** or **'screen'**.").send()
+        inputs = {
+            "role": "",
+            "seniority": "",
+            "tech_stack": "",
+            "next_action": "process",
+            "messages": [content]
+        }
+        result_state = app_graph.invoke(inputs)
+        if result_state.get("messages"):
+            for msg in result_state["messages"]:
+                if msg != content:
+                    await cl.Message(content=msg).send()
         return
-
+    
+    # Get settings from session
+    role = cl.user_session.get("role", "").strip()
+    seniority = cl.user_session.get("seniority", "").strip()
+    tech_stack = cl.user_session.get("tech_stack", "").strip()
+    
+    # If user typed 'screen', use settings
+    if content == "screen":
+        missing = []
+        if not role:
+            missing.append("Role")
+        if not seniority:
+            missing.append("Seniority")
+        if not tech_stack:
+            missing.append("Tech Stack")
+        
+        if missing:
+            await cl.Message(
+                content=f"⚠️ Please specify the following in the settings panel: **{', '.join(missing)}**\n\n"
+                        f"Or tell me what you're looking for in natural language!"
+            ).send()
+            return
+        
+        next_action = "screen"
+    else:
+        # Try to parse natural language request
+        # For now, if settings are filled, use them. Otherwise ask for clarification.
+        if not role or not seniority or not tech_stack:
+            await cl.Message(
+                content="I'd be happy to help! Please tell me:\n\n"
+                        "1. **What role** are you looking for? (e.g., Backend Engineer, Frontend Developer)\n"
+                        "2. **What seniority level?** (Junior, Mid, Senior, Lead, Manager)\n"
+                        "3. **What tech stack?** (e.g., Python, Django, AWS)\n\n"
+                        "You can either fill these in the settings panel or tell me directly!"
+            ).send()
+            return
+        
+        next_action = "screen"
+    
+    await cl.Message(content="Screening candidates...").send()
+    
     # Run the graph
     inputs = {
         "role": role,
