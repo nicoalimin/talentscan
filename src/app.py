@@ -128,6 +128,21 @@ async def main(message: cl.Message):
     seniority = cl.user_session.get("seniority", "").strip()
     tech_stack = cl.user_session.get("tech_stack", "").strip()
     
+    # Check if user is asking for longlist
+    if "longlist" in content_lower or "show all" in content_lower:
+        last_results = cl.user_session.get("last_results", None)
+        if last_results:
+            longlist = last_results.get('longlist', [])
+            response = f"## Full Longlist ({len(longlist)} candidates)\n\n"
+            for i, c in enumerate(longlist):
+                response += f"{i+1}. **{c.get('name')}** - Score: {c.get('score', 0):.2f}\n"
+                response += f"   - {c.get('general_proficiency')} | {c.get('years_of_experience')} yrs | {c.get('tech_stack')}\n\n"
+            await cl.Message(content=response).send()
+            return
+        else:
+            await cl.Message(content="No previous search results. Please run a search first!").send()
+            return
+    
     # Use LLM to extract criteria from user message
     criteria = extract_criteria_with_llm(content)
     
@@ -242,17 +257,20 @@ async def main(message: cl.Message):
         shortlist = results.get('shortlist', [])
         longlist = results.get('longlist', [])
         
-        response = f"## Shortlist ({len(shortlist)})\n\n"
+        # Store results in session for later retrieval
+        cl.user_session.set("last_results", results)
+        
+        response = f"## Shortlist (Top {len(shortlist)})\n\n"
         for i, c in enumerate(shortlist):
             response += f"### {i+1}. {c.get('name')} (Score: {c.get('score', 0):.2f})\n"
             response += f"- **Role:** {c.get('general_proficiency')}\n"
             response += f"- **Exp:** {c.get('years_of_experience')} years\n"
             response += f"- **Tech Stack:** {c.get('tech_stack')}\n"
             response += f"- **Summary:** {c.get('ai_summary')}\n\n"
-            
-        response += f"## Longlist ({len(longlist)})\n"
-        for i, c in enumerate(longlist):
-            response += f"{i+1}. {c.get('name')} - {c.get('score', 0):.2f}\n"
+        
+        # Only mention longlist exists
+        if len(longlist) > len(shortlist):
+            response += f"\n_Found {len(longlist)} total candidates. Type 'show longlist' to see all._"
             
         await cl.Message(content=response).send()
     
