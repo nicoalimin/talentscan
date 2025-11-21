@@ -20,10 +20,12 @@ class WorkExperience(BaseModel):
 class CandidateProfile(BaseModel):
     name: str = Field(description="Full name of the candidate")
     age: int = Field(description="Age of the candidate, if mentioned. If not, estimate or put 0")
-    skillset: str = Field(description="Comma-separated list of skills")
+    skillset: str = Field(description="Comma-separated list of all skills mentioned")
+    high_confidence_skills: str = Field(description="Comma-separated skills that are clearly demonstrated in work experience with concrete examples (e.g., 'Built X using Y', 'Managed Z'). Only include skills with evidence of actual usage.")
+    low_confidence_skills: str = Field(description="Comma-separated skills that are only listed without proof or context in work experience. These are claimed but not demonstrated.")
     years_of_experience: int = Field(description="Total years of experience")
     work_experience: List[WorkExperience] = Field(description="List of work experiences")
-    tech_stack: str = Field(description="Comma-separated list of technologies used")
+    tech_stack: str = Field(description="Comma-separated list of technologies used, prioritize those from work experience")
     general_proficiency: str = Field(description="General proficiency level (e.g., Junior, Mid, Senior, Lead)")
     ai_summary: str = Field(description="A brief AI-generated summary of the candidate's profile")
 

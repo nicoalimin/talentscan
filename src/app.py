@@ -265,7 +265,16 @@ async def main(message: cl.Message):
             response += f"### {i+1}. {c.get('name')} (Score: {c.get('score', 0):.2f})\n"
             response += f"- **Role:** {c.get('general_proficiency')}\n"
             response += f"- **Exp:** {c.get('years_of_experience')} years\n"
-            response += f"- **Tech Stack:** {c.get('tech_stack')}\n"
+            
+            # Show skill confidence breakdown
+            high_conf = c.get('high_confidence_skills', '')
+            low_conf = c.get('low_confidence_skills', '')
+            
+            if high_conf:
+                response += f"- **✓ Proven Skills:** {high_conf}\n"
+            if low_conf:
+                response += f"- **Listed Skills:** {low_conf}\n"
+            
             response += f"- **Summary:** {c.get('ai_summary')}\n\n"
         
         # Only mention longlist exists

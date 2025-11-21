@@ -20,6 +20,8 @@ def init_db():
             name TEXT,
             age INTEGER,
             skillset TEXT,
+            high_confidence_skills TEXT,
+            low_confidence_skills TEXT,
             years_of_experience INTEGER,
             work_experience TEXT,
             tech_stack TEXT,
@@ -36,14 +38,16 @@ def add_candidate(candidate_data: Dict):
     try:
         cursor.execute('''
             INSERT INTO candidates (
-                filename, name, age, skillset, years_of_experience, 
+                filename, name, age, skillset, high_confidence_skills, low_confidence_skills, years_of_experience, 
                 work_experience, tech_stack, general_proficiency, ai_summary
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             candidate_data.get('filename'),
             candidate_data.get('name'),
             candidate_data.get('age'),
             candidate_data.get('skillset'),
+            candidate_data.get('high_confidence_skills', ''),
+            candidate_data.get('low_confidence_skills', ''),
             candidate_data.get('years_of_experience'),
             json.dumps(candidate_data.get('work_experience', [])),
             candidate_data.get('tech_stack'),
