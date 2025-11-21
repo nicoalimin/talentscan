@@ -1,6 +1,6 @@
 import os
 import json
-from typing import List, Dict
+from typing import List, Dict, Optional
 import pypdf
 import docx
 from langchain_google_genai import ChatGoogleGenerativeAI
