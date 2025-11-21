@@ -53,8 +53,8 @@ server:
 
 # Run Chainlit UI
 ui:
-	@echo "Starting Chainlit UI..."
-	./venv/bin/chainlit run chainlit_app.py
+	@echo "Starting Chainlit UI with hot reload..."
+	./venv/bin/chainlit run chainlit_app.py --watch
 
 # View database contents
 view-db:
