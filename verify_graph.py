@@ -1,0 +1,27 @@
+from graph import app_graph
+from database import init_db
+
+def verify_graph():
+    init_db()
+    
+    print("Testing 'process' action...")
+    inputs = {
+        "role": "Backend Engineer",
+        "seniority": "Senior",
+        "tech_stack": "Python",
+        "next_action": "process",
+        "messages": ["process"]
+    }
+    result = app_graph.invoke(inputs)
+    print("Result:", result.get("messages"))
+    
+    print("\nTesting 'screen' action...")
+    inputs["next_action"] = "screen"
+    inputs["messages"] = ["screen"]
+    result = app_graph.invoke(inputs)
+    results = result.get("results", {})
+    print("Shortlist count:", len(results.get("shortlist", [])))
+    print("Longlist count:", len(results.get("longlist", [])))
+
+if __name__ == "__main__":
+    verify_graph()
