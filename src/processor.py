@@ -12,20 +12,34 @@ from src.database import add_candidate, get_candidate_by_filename
 
 # Define Pydantic model for structured output
 class WorkExperience(BaseModel):
-    company: str = Field(description="Name of the company")
-    role: str = Field(description="Job title")
-    duration: str = Field(description="Duration of employment")
-    description: str = Field(description="Brief description of responsibilities")
+    company: str = Field(description="Company name")
+    role: str = Field(description="Job title/role")
+    duration: str = Field(description="Duration (e.g., '2020-2022', 'Jan 2020 - Dec 2021')")
+    months_of_service: int = Field(description="Total months in this role (calculate from duration)")
+    skillset: str = Field(description="Specific skills demonstrated in this role with concrete examples from description")
+    tech_stack: str = Field(description="Technologies explicitly mentioned for this role")
+    projects: List[str] = Field(default_factory=list, description="Key projects, achievements, or specific work mentioned")
+    is_internship: bool = Field(default=False, description="True if clearly marked as internship")
+    description: str = Field(description="Detailed responsibilities and achievements")
+    start_date: str = Field(default="", description="Start date (extract if available)")
+    end_date: str = Field(default="", description="End date (extract if available, 'Present' if current)")
 
 class CandidateProfile(BaseModel):
     name: str = Field(description="Full name of the candidate")
     age: int = Field(description="Age of the candidate, if mentioned. If not, estimate or put 0")
-    skillset: str = Field(description="Comma-separated list of all skills mentioned")
-    high_confidence_skills: str = Field(description="Comma-separated skills that are clearly demonstrated in work experience with concrete examples (e.g., 'Built X using Y', 'Managed Z'). Only include skills with evidence of actual usage.")
-    low_confidence_skills: str = Field(description="Comma-separated skills that are only listed without proof or context in work experience. These are claimed but not demonstrated.")
-    years_of_experience: int = Field(description="Total years of experience")
-    work_experience: List[WorkExperience] = Field(description="List of work experiences")
-    tech_stack: str = Field(description="Comma-separated list of technologies used, prioritize those from work experience")
+    work_experience: List[WorkExperience] = Field(description="List of all work experiences in chronological order")
+    
+    # Aggregated summary (calculated from work experience)
+    total_months_experience: int = Field(description="Sum of all months_of_service across experiences")
+    total_companies: int = Field(description="Count of unique companies")
+    roles_served: str = Field(description="Comma-separated list of unique roles held")
+    
+    # Skills
+    skillset: str = Field(description="Comma-separated list of all skills mentioned anywhere")
+    high_confidence_skills: str = Field(description="Skills clearly demonstrated in work experience with concrete examples")
+    low_confidence_skills: str = Field(description="Skills only listed without proof in work experience")
+    tech_stack: str = Field(description="Comma-separated list of all technologies from work experience")
+    
     general_proficiency: str = Field(description="General proficiency level (e.g., Junior, Mid, Senior, Lead)")
     ai_summary: str = Field(description="A brief AI-generated summary of the candidate's profile")
 
@@ -50,33 +64,53 @@ def extract_text_from_docx(filepath: str) -> str:
         print(f"Error reading DOCX {filepath}: {e}")
     return text
 
-def extract_data_with_gemini(text: str) -> Dict:
-    if not text:
-        return {}
-    
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        print("GOOGLE_API_KEY not found in environment variables.")
-        return {}
-
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=api_key)
-    
-    parser = PydanticOutputParser(pydantic_object=CandidateProfile)
-    
-    prompt = PromptTemplate(
-        template="Extract the following information from the resume text.\n{format_instructions}\n\nResume Text:\n{text}",
-        input_variables=["text"],
-        partial_variables={"format_instructions": parser.get_format_instructions()}
-    )
-    
-    chain = prompt | llm | parser
-    
+def extract_structured_data(text: str) -> Optional[Dict]:
     try:
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            print("GOOGLE_API_KEY not found in environment variables.")
+            return None
+        
+        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0)
+        parser = PydanticOutputParser(pydantic_object=CandidateProfile)
+        
+        prompt = PromptTemplate(
+            template="""You are an expert resume parser. Extract detailed structured information from this resume.
+
+IMPORTANT INSTRUCTIONS FOR WORK EXPERIENCE:
+1. For EACH work experience entry, calculate months_of_service by parsing the duration
+2. Extract skills that are SPECIFICALLY demonstrated in each role (look for action verbs like "Built", "Developed", "Managed")
+3. List technologies that are EXPLICITLY mentioned for that specific role
+4. Extract key projects, achievements, or specific deliverables mentioned
+5. Determine if it's an internship (look for keywords: "intern", "internship", "trainee")
+6. Extract start_date and end_date if mentioned (keep format as-is, or use "Present" for current roles)
+
+SKILL CLASSIFICATION:
+- high_confidence_skills: Skills with concrete examples in work experience (e.g., "Built REST API using Python")
+- low_confidence_skills: Skills only listed in a skills section without work evidence
+
+AGGREGATED FIELDS TO CALCULATE:
+- total_months_experience: Sum all months_of_service from work experiences
+- total_companies: Count unique company names
+- roles_served: Comma-separated list of unique job titles
+- tech_stack: Aggregate all technologies from work experience entries
+
+Resume text:
+{text}
+
+{format_instructions}
+""",
+            input_variables=["text"],
+            partial_variables={"format_instructions": parser.get_format_instructions()}
+        )
+        
+        chain = prompt | llm | parser
         result = chain.invoke({"text": text})
         return result.dict()
+    
     except Exception as e:
-        print(f"Error extracting data with Gemini: {e}")
-        return {}
+        print(f"Error extracting structured data: {e}")
+        return None
 
 def process_resumes(folder_path: str):
     if not os.path.exists(folder_path):

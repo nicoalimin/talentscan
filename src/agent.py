@@ -51,10 +51,12 @@ class ResumeScreeningAgent:
         if role.lower() in candidate_skills or role.lower() in candidate_stack:
              score += 10
              
-        # Years of experience bonus
-        yoe = candidate.get('years_of_experience') or 0
-        if yoe > 0:
-            score += min(yoe, 10)
+        # Experience bonus (using months now)
+        total_months = candidate.get('total_months_experience', 0)
+        # Convert to years equivalent for scoring
+        years_equiv = total_months / 12 if total_months else 0
+        if years_equiv > 0:
+            score += min(years_equiv, 10)
             
         return score
 

@@ -262,9 +262,16 @@ async def main(message: cl.Message):
         
         response = f"## Shortlist (Top {len(shortlist)})\n\n"
         for i, c in enumerate(shortlist):
+            # Calculate years/months display
+            total_months = c.get('total_months_experience', 0)
+            years = total_months // 12
+            months = total_months % 12
+            exp_display = f"{years}y {months}m" if months else f"{years} years"
+            
             response += f"### {i+1}. {c.get('name')} (Score: {c.get('score', 0):.2f})\n"
             response += f"- **Role:** {c.get('general_proficiency')}\n"
-            response += f"- **Exp:** {c.get('years_of_experience')} years\n"
+            response += f"- **Total Experience:** {exp_display} across {c.get('total_companies', 0)} companies\n"
+            response += f"- **Roles:** {c.get('roles_served', 'N/A')}\n"
             
             # Show skill confidence breakdown
             high_conf = c.get('high_confidence_skills', '')
