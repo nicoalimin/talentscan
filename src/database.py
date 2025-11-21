@@ -122,3 +122,111 @@ def get_all_candidates() -> List[Dict]:
 # Initialize the database when this module is imported (or called explicitly)
 if __name__ == "__main__":
     print("Database initialized.")
+
+def init_star_schema():
+    """Initialize the STAR schema tables."""
+    from src.schema import SCHEMA_STATEMENTS
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    for statement in SCHEMA_STATEMENTS:
+        cursor.execute(statement)
+    conn.commit()
+    conn.close()
+
+def recompute_star_schema():
+    """
+    Wipes and repopulates the STAR schema tables from the raw data.
+    This ensures the analytical model is always in sync with the raw extraction.
+    """
+    init_star_schema()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Clear existing data in STAR schema
+    tables = [
+        "bridge_experience_skill", "fact_candidate_experience", 
+        "dim_company", "dim_role", "dim_skill", "dim_candidate"
+    ]
+    for table in tables:
+        cursor.execute(f"DELETE FROM {table}")
+        
+    # 1. Populate Dim Candidate
+    cursor.execute("SELECT id, filename, name, age FROM candidates")
+    candidates = cursor.fetchall()
+    candidate_map = {} # original_id -> candidate_key
+    
+    for cand in candidates:
+        cursor.execute(
+            "INSERT INTO dim_candidate (original_id, filename, name, age) VALUES (?, ?, ?, ?)",
+            (cand['id'], cand['filename'], cand['name'], cand['age'])
+        )
+        candidate_map[cand['id']] = cursor.lastrowid
+        
+    # 2. Process Work Experiences to populate other dims and fact
+    cursor.execute("SELECT * FROM work_experience")
+    work_exps = cursor.fetchall()
+    
+    for we in work_exps:
+        if not we['candidate_id'] in candidate_map:
+            continue
+            
+        candidate_key = candidate_map[we['candidate_id']]
+        
+        # Dim Company
+        company_name = we['company_name'] or "Unknown"
+        cursor.execute("SELECT company_key FROM dim_company WHERE company_name = ?", (company_name,))
+        res = cursor.fetchone()
+        if res:
+            company_key = res[0]
+        else:
+            cursor.execute("INSERT INTO dim_company (company_name) VALUES (?)", (company_name,))
+            company_key = cursor.lastrowid
+            
+        # Dim Role
+        role_name = we['role'] or "Unknown"
+        cursor.execute("SELECT role_key FROM dim_role WHERE role_name = ?", (role_name,))
+        res = cursor.fetchone()
+        if res:
+            role_key = res[0]
+        else:
+            cursor.execute("INSERT INTO dim_role (role_name) VALUES (?)", (role_name,))
+            role_key = cursor.lastrowid
+            
+        # Fact Experience
+        cursor.execute('''
+            INSERT INTO fact_candidate_experience 
+            (candidate_key, company_key, role_key, months_of_service, is_internship, start_date, end_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            candidate_key, company_key, role_key, 
+            we['months_of_service'], we['is_internship'],
+            we['start_date'], we['end_date']
+        ))
+        fact_id = cursor.lastrowid
+        
+        # Handle Skills (Dim Skill & Bridge)
+        # Combine tech_stack and skillset
+        skills = set()
+        if we['tech_stack']:
+            skills.update([s.strip() for s in we['tech_stack'].split(',') if s.strip()])
+        if we['skillset']:
+            # Simple splitting by comma for now, could be improved
+            skills.update([s.strip() for s in we['skillset'].split(',') if s.strip()])
+            
+        for skill_name in skills:
+            cursor.execute("SELECT skill_key FROM dim_skill WHERE skill_name = ?", (skill_name,))
+            res = cursor.fetchone()
+            if res:
+                skill_key = res[0]
+            else:
+                cursor.execute("INSERT INTO dim_skill (skill_name) VALUES (?)", (skill_name,))
+                skill_key = cursor.lastrowid
+            
+            # Insert into bridge
+            cursor.execute(
+                "INSERT INTO bridge_experience_skill (fact_id, skill_key, confidence_level) VALUES (?, ?, ?)",
+                (fact_id, skill_key, 'HIGH') # Assuming mentioned in work exp is high confidence
+            )
+            
+    conn.commit()
+    conn.close()

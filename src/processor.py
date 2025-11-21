@@ -144,3 +144,9 @@ def process_resumes(folder_path: str):
                 print(f"Added {data.get('name', 'Unknown')} to database.")
             else:
                 print(f"Failed to extract structured data for {filename}")
+    
+    # Recompute STAR schema after processing all files
+    from src.database import recompute_star_schema
+    print("Recomputing STAR schema...")
+    recompute_star_schema()
+    print("STAR schema updated.")
