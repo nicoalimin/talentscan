@@ -2,7 +2,6 @@ import os
 import argparse
 from src.processor import process_resumes
 from src.agent import ResumeScreeningAgent
-from src.database import init_db
 
 
 def main():
@@ -14,9 +13,6 @@ def main():
     parser.add_argument("--server", action="store_true", help="Run as API server")
     
     args = parser.parse_args()
-    
-    # Ensure DB is initialized
-    init_db()
 
     if args.server:
         import uvicorn

@@ -6,10 +6,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 from typing import Optional
 from src.graph import app_graph
-from src.database import init_db
-
-# Initialize DB
-init_db()
+from src.database import get_all_candidates
 
 
 # Pydantic model for structured extraction

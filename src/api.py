@@ -3,16 +3,10 @@ from pydantic import BaseModel
 from typing import List, Optional
 from src.agent import ResumeScreeningAgent
 from src.processor import process_resumes
-from src.database import get_all_candidates, init_db
+from src.database import get_all_candidates
 import os
 
 app = FastAPI(title="Resume Screening Agent API")
-
-# Initialize DB on startup
-
-@app.on_event("startup")
-def startup_event():
-    init_db()
 
 class ScreenRequest(BaseModel):
     role: str

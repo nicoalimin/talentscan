@@ -10,71 +10,6 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-def init_db():
-    """
-    Initialize database schema (DEPRECATED).
-    
-    WARNING: This function is deprecated. Use database migrations instead:
-        - Run `make migrate-up` to apply migrations
-        - Run `make migrate-down` to rollback migrations
-        - Run `make migrate-status` to check migration status
-    
-    This function is kept for backward compatibility only.
-    """
-    print("WARNING: init_db() is deprecated. Please use migrations instead:")
-    print("  Run: make migrate-up")
-    print()
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Candidates table with aggregated summary data
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS candidates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT UNIQUE,
-            name TEXT,
-            age INTEGER,
-            
-            -- Aggregated work experience summary
-            total_months_experience INTEGER,
-            total_companies INTEGER,
-            roles_served TEXT,
-            
-            -- Skill aggregation
-            skillset TEXT,
-            high_confidence_skills TEXT,
-            low_confidence_skills TEXT,
-            tech_stack TEXT,
-            
-            general_proficiency TEXT,
-            ai_summary TEXT
-        )
-    ''')
-    
-    # Work experience table with detailed records
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS work_experience (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            candidate_id INTEGER NOT NULL,
-            company_name TEXT NOT NULL,
-            role TEXT NOT NULL,
-            months_of_service INTEGER NOT NULL,
-            skillset TEXT,
-            tech_stack TEXT,
-            projects TEXT,
-            is_internship BOOLEAN DEFAULT 0,
-            has_overlap BOOLEAN DEFAULT 0,
-            start_date TEXT,
-            end_date TEXT,
-            description TEXT,
-            FOREIGN KEY (candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-
 def add_candidate(candidate_data: Dict):
     """Add candidate with aggregated summary data."""
     conn = get_db_connection()
@@ -186,5 +121,4 @@ def get_all_candidates() -> List[Dict]:
 
 # Initialize the database when this module is imported (or called explicitly)
 if __name__ == "__main__":
-    init_db()
     print("Database initialized.")
