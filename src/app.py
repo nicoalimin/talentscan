@@ -1,9 +1,67 @@
+import os
 import chainlit as cl
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel, Field
+from typing import Optional
 from src.graph import app_graph
 from src.database import init_db
 
 # Initialize DB
 init_db()
+
+
+# Pydantic model for structured extraction
+class ScreeningCriteria(BaseModel):
+    role: Optional[str] = Field(None, description="The job role or position (e.g., Backend Engineer, Frontend Developer)")
+    seniority: Optional[str] = Field(None, description="Seniority level: must be one of Junior, Mid, Senior, Lead, or Manager")
+    tech_stack: Optional[str] = Field(None, description="Technologies, programming languages, or skills (e.g., Python, React, AWS)")
+    intent: str = Field(description="What the user wants to do: 'screen', 'process', 'clarify', or 'chat'")
+
+
+def extract_criteria_with_llm(user_message: str) -> ScreeningCriteria:
+    """Use Gemini to extract screening criteria from user message."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        # Fallback to simple parsing if no API key
+        return ScreeningCriteria(intent="clarify")
+    
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0)
+    parser = PydanticOutputParser(pydantic_object=ScreeningCriteria)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are an expert at extracting job screening criteria from user messages.
+Extract the role, seniority level, and tech stack from the user's message.
+
+For seniority, map similar terms:
+- "entry level", "beginner", "jr" → Junior
+- "intermediate", "mid-level" → Mid  
+- "senior", "sr", "experienced" → Senior
+- "lead", "principal", "staff" → Lead
+- "manager", "engineering manager" → Manager
+
+For intent:
+- If user wants to search/screen/find candidates → "screen"
+- If user mentions processing/scanning resumes → "process"
+- If message is unclear or just chatting → "clarify"
+- General questions or greetings → "chat"
+
+{format_instructions}"""),
+        ("human", "{query}")
+    ])
+    
+    chain = prompt | llm | parser
+    
+    try:
+        result = chain.invoke({
+            "query": user_message,
+            "format_instructions": parser.get_format_instructions()
+        })
+        return result
+    except Exception as e:
+        print(f"LLM extraction error: {e}")
+        return ScreeningCriteria(intent="clarify")
 
 
 @cl.on_chat_start
@@ -36,10 +94,45 @@ async def update_settings(settings):
 
 @cl.on_message
 async def main(message: cl.Message):
-    content = message.content.lower().strip()
+    content = message.content.strip()
+    content_lower = content.lower()
     
-    # Handle process command
-    if content == "process":
+    # Get current state
+    awaiting = cl.user_session.get("awaiting", None)
+    
+    # If we're waiting for specific information, process the response
+    if awaiting:
+        if awaiting == "role":
+            cl.user_session.set("role", content)
+            cl.user_session.set("awaiting", None)
+            await cl.Message(content=f"✓ Got it! Role: **{content}**").send()
+        elif awaiting == "seniority":
+            # Use LLM to normalize seniority
+            criteria = extract_criteria_with_llm(f"seniority level: {content}")
+            if criteria.seniority:
+                cl.user_session.set("seniority", criteria.seniority)
+                cl.user_session.set("awaiting", None)
+                await cl.Message(content=f"✓ Got it! Seniority: **{criteria.seniority}**").send()
+            else:
+                await cl.Message(
+                    content=f"Please choose from: **Junior**, **Mid**, **Senior**, **Lead**, or **Manager**"
+                ).send()
+                return
+        elif awaiting == "tech_stack":
+            cl.user_session.set("tech_stack", content)
+            cl.user_session.set("awaiting", None)
+            await cl.Message(content=f"✓ Got it! Tech Stack: **{content}**").send()
+    
+    # Get current settings
+    role = cl.user_session.get("role", "").strip()
+    seniority = cl.user_session.get("seniority", "").strip()
+    tech_stack = cl.user_session.get("tech_stack", "").strip()
+    
+    # Use LLM to extract criteria from user message
+    criteria = extract_criteria_with_llm(content)
+    
+    # Handle process intent
+    if criteria.intent == "process" or content_lower == "process":
         await cl.Message(content="Scanning resumes...").send()
         inputs = {
             "role": "",
@@ -55,45 +148,81 @@ async def main(message: cl.Message):
                     await cl.Message(content=msg).send()
         return
     
-    # Get settings from session
-    role = cl.user_session.get("role", "").strip()
-    seniority = cl.user_session.get("seniority", "").strip()
-    tech_stack = cl.user_session.get("tech_stack", "").strip()
+    # Handle chat/greeting intent
+    if criteria.intent == "chat":
+        await cl.Message(
+            content="Hello! 👋 I can help you screen candidates from resumes.\n\n"
+                    "Just tell me what you're looking for (e.g., 'I need a senior Python developer') "
+                    "or type **'screen'** to start a guided search!"
+        ).send()
+        return
     
-    # If user typed 'screen', use settings
-    if content == "screen":
-        missing = []
-        if not role:
-            missing.append("Role")
-        if not seniority:
-            missing.append("Seniority")
-        if not tech_stack:
-            missing.append("Tech Stack")
-        
+    # Update session with extracted criteria
+    updated = False
+    if criteria.role and not role:
+        cl.user_session.set("role", criteria.role)
+        role = criteria.role
+        updated = True
+        await cl.Message(content=f"✓ I understand you're looking for: **{criteria.role}**").send()
+    
+    if criteria.seniority and not seniority:
+        cl.user_session.set("seniority", criteria.seniority)
+        seniority = criteria.seniority
+        updated = True
+        await cl.Message(content=f"✓ Seniority level: **{criteria.seniority}**").send()
+    
+    if criteria.tech_stack and not tech_stack:
+        cl.user_session.set("tech_stack", criteria.tech_stack)
+        tech_stack = criteria.tech_stack
+        updated = True
+        await cl.Message(content=f"✓ Tech stack: **{criteria.tech_stack}**").send()
+    
+    # Check what's still missing
+    missing = []
+    if not role:
+        missing.append("role")
+    if not seniority:
+        missing.append("seniority")
+    if not tech_stack:
+        missing.append("tech_stack")
+    
+    # If user wants to screen (explicitly or implied) or we just updated info
+    if criteria.intent == "screen" or content_lower == "screen" or awaiting or updated:
         if missing:
-            await cl.Message(
-                content=f"⚠️ Please specify the following in the settings panel: **{', '.join(missing)}**\n\n"
-                        f"Or tell me what you're looking for in natural language!"
-            ).send()
+            # Ask for the first missing piece
+            next_missing = missing[0]
+            cl.user_session.set("awaiting", next_missing)
+            
+            if next_missing == "role":
+                await cl.Message(
+                    content="What **role** are you looking for?\n\n"
+                            "_(e.g., Backend Engineer, Frontend Developer, Data Scientist)_"
+                ).send()
+            elif next_missing == "seniority":
+                await cl.Message(
+                    content="What **seniority level**?\n\n"
+                            "Choose from: **Junior**, **Mid**, **Senior**, **Lead**, or **Manager**"
+                ).send()
+            elif next_missing == "tech_stack":
+                await cl.Message(
+                    content="What **tech stack** or skills are you looking for?\n\n"
+                            "_(e.g., Python, Django, AWS or React, TypeScript, Node.js)_"
+                ).send()
             return
         
+        # All info available, proceed with screening
+        await cl.Message(content="Screening candidates...").send()
         next_action = "screen"
     else:
-        # Try to parse natural language request
-        # For now, if settings are filled, use them. Otherwise ask for clarification.
-        if not role or not seniority or not tech_stack:
-            await cl.Message(
-                content="I'd be happy to help! Please tell me:\n\n"
-                        "1. **What role** are you looking for? (e.g., Backend Engineer, Frontend Developer)\n"
-                        "2. **What seniority level?** (Junior, Mid, Senior, Lead, Manager)\n"
-                        "3. **What tech stack?** (e.g., Python, Django, AWS)\n\n"
-                        "You can either fill these in the settings panel or tell me directly!"
-            ).send()
-            return
-        
-        next_action = "screen"
-    
-    await cl.Message(content="Screening candidates...").send()
+        # Couldn't extract meaningful criteria
+        await cl.Message(
+            content="I'd be happy to help! To screen candidates, I need to know:\n\n"
+                    "1. **Role** (e.g., Backend Engineer)\n"
+                    "2. **Seniority** (Junior/Mid/Senior/Lead/Manager)\n"
+                    "3. **Tech Stack** (e.g., Python, Django, AWS)\n\n"
+                    "Just tell me what you're looking for, or type **'screen'** for a guided search!"
+        ).send()
+        return
     
     # Run the graph
     inputs = {
@@ -133,3 +262,4 @@ async def main(message: cl.Message):
             # Avoid repeating the input message if it was passed through
             if msg != content: 
                 await cl.Message(content=msg).send()
+
