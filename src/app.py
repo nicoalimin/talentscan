@@ -14,7 +14,7 @@ class ScreeningCriteria(BaseModel):
     role: Optional[str] = Field(None, description="The job role or position (e.g., Backend Engineer, Frontend Developer)")
     seniority: Optional[str] = Field(None, description="Seniority level: must be one of Junior, Mid, Senior, Lead, or Manager")
     tech_stack: Optional[str] = Field(None, description="Technologies, programming languages, or skills (e.g., Python, React, AWS)")
-    intent: str = Field(description="What the user wants to do: 'screen', 'process', 'clarify', or 'chat'")
+    intent: str = Field(description="User intent: 'screen', 'process', 'analysis', 'clarify', or 'chat'")
 
 
 def extract_criteria_with_llm(user_message: str, history: list[str] = []) -> ScreeningCriteria:
@@ -37,7 +37,8 @@ Use the conversation history to understand context.
 - If the user is answering a question (e.g., "Backend" after "What role?"), the intent is "screen" (or "clarify" with the extracted info).
 - If the user says "screen" or "search", intent is "screen".
 - If the user says "process" or "scan", intent is "process".
-- If the user is just greeting or asking general questions, intent is "chat".
+- If the user asks complex questions, asks for comparisons, "why", "how", or deep dives (e.g., "Why is candidate X better?", "Analyze the market trends"), intent is "analysis".
+- If the user is just greeting, asking general questions, or if NO other intent matches, intent is "chat". "chat" is the CATCH-ALL.
 
 For seniority, map similar terms:
 - "entry level", "beginner", "jr" -> Junior
@@ -64,7 +65,42 @@ Previous conversation:
         return result
     except Exception as e:
         print(f"LLM extraction error: {e}")
-        return ScreeningCriteria(intent="clarify")
+        return ScreeningCriteria(intent="chat")
+
+
+async def perform_deep_analysis(query: str, history: list[str]):
+    """Perform deep analysis using Gemini."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        return "I cannot perform analysis without a valid API key."
+        
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.2)
+    
+    history_str = "\n".join(history[-10:]) # More context for analysis
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a Senior Talent Intelligence Analyst.
+Your goal is to provide deep, insightful analysis based on the user's query and the conversation history.
+
+You have access to the context of the conversation, including previous candidate lists and screening criteria.
+Use this to answer questions like:
+- "Why is candidate X a good fit?"
+- "Compare the top 3 candidates."
+- "What are the common skills missing in this pool?"
+- "How should I adjust my criteria to get better matches?"
+
+Be analytical, objective, and detailed. If you need more info, say so.
+"""),
+        ("human", f"""Context (History):
+{history_str}
+
+User Query:
+{query}""")
+    ])
+    
+    chain = prompt | llm
+    response = await chain.ainvoke({})
+    return response.content
 
 
 @cl.on_chat_start
@@ -180,11 +216,28 @@ async def main(message: cl.Message):
                     history.append(f"Assistant: {msg}")
         return
     
-    # Handle chat/greeting intent
+    # Handle analysis intent
+    if criteria.intent == "analysis":
+        msg = await cl.Message(content="Analyzing...").send()
+        analysis_result = await perform_deep_analysis(content, history)
+        await msg.update(content=analysis_result)
+        history.append(f"Assistant: {analysis_result}")
+        cl.user_session.set("history", history)
+        return
+
+    # Handle chat/greeting intent OR catch-all
     if criteria.intent == "chat":
-        msg = ("Hello! 👋 I can help you screen candidates from resumes.\n\n"
-               "Just tell me what you're looking for (e.g., 'I need a senior Python developer') "
-               "or type **'screen'** to start a guided search!")
+        # If it's just a greeting or unclear, give a helpful response
+        # But if it looks like a question, try to answer it using the LLM in 'analysis' mode implicitly? 
+        # For now, let's keep it simple: if it's chat, just be helpful.
+        # Actually, let's use the LLM to generate a conversational response if it's "chat" to be more "agentic".
+        
+        # Simple fallback for now to avoid over-engineering the chat part
+        msg = ("I'm here to help you screen candidates! You can:\n"
+               "- Ask me to **screen** for a specific role\n"
+               "- Ask me to **process** new resumes\n"
+               "- Ask for **analysis** or comparisons of candidates\n\n"
+               "What would you like to do?")
         await cl.Message(content=msg).send()
         history.append(f"Assistant: {msg}")
         cl.user_session.set("history", history)
@@ -252,12 +305,8 @@ async def main(message: cl.Message):
         await cl.Message(content="Screening candidates...").send()
         next_action = "screen"
     else:
-        # Couldn't extract meaningful criteria
-        msg = ("I'd be happy to help! To screen candidates, I need to know:\n\n"
-               "1. **Role** (e.g., Backend Engineer)\n"
-               "2. **Seniority** (Junior/Mid/Senior/Lead/Manager)\n"
-               "3. **Tech Stack** (e.g., Python, Django, AWS)\n\n"
-               "Just tell me what you're looking for, or type **'screen'** for a guided search!")
+        # This block might be unreachable now due to 'chat' catch-all, but keeping as safety
+        msg = "I'm not sure what you want to do. Try typing 'screen' or 'process'."
         await cl.Message(content=msg).send()
         history.append(f"Assistant: {msg}")
         cl.user_session.set("history", history)
