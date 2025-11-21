@@ -114,32 +114,33 @@ Resume text:
 
 def process_resumes(folder_path: str):
     if not os.path.exists(folder_path):
-        print(f"Folder {folder_path} does not exist.")
+        print(f"Folder {folder_path} not found.")
         return
-
-    for filename in os.listdir(folder_path):
-        filepath = os.path.join(folder_path, filename)
-        if not os.path.isfile(filepath):
-            continue
-            
-        if filename.lower().endswith(('.pdf', '.docx')):
+    
+    files = os.listdir(folder_path)
+    for filename in files:
+        if filename.endswith('.pdf') or filename.endswith('.docx'):
             # Check if already processed
-            if get_candidate_by_filename(filename):
+            existing = get_candidate_by_filename(filename)
+            if existing:
                 print(f"Skipping {filename}, already processed.")
                 continue
             
+            filepath = os.path.join(folder_path, filename)
             print(f"Processing {filename}...")
-            text = ""
-            if filename.lower().endswith('.pdf'):
+            
+            # Extract text
+            if filename.endswith('.pdf'):
                 text = extract_text_from_pdf(filepath)
-            elif filename.lower().endswith('.docx'):
+            else:
                 text = extract_text_from_docx(filepath)
             
-            if text:
-                data = extract_data_with_gemini(text)
-                if data:
-                    data['filename'] = filename
-                    add_candidate(data)
-                    print(f"Added {filename} to database.")
-                else:
-                    print(f"Failed to extract structured data for {filename}")
+            # Extract structured data
+            data = extract_structured_data(text)
+            
+            if data:
+                data['filename'] = filename
+                add_candidate(data)
+                print(f"Added {data.get('name', 'Unknown')} to database.")
+            else:
+                print(f"Failed to extract structured data for {filename}")
