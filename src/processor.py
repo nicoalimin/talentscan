@@ -17,7 +17,7 @@ class WorkExperience(BaseModel):
     duration: str = Field(description="Duration (e.g., '2020-2022', 'Jan 2020 - Dec 2021')")
     months_of_service: int = Field(description="Total months in this role (calculate from duration)")
     skillset: str = Field(description="Specific skills demonstrated in this role with concrete examples from description")
-    tech_stack: str = Field(description="Technologies explicitly mentioned for this role")
+    tech_stack: str = Field(default="", description="Technologies explicitly mentioned for this role")
     projects: List[str] = Field(default_factory=list, description="Key projects, achievements, or specific work mentioned")
     is_internship: bool = Field(default=False, description="True if clearly marked as internship")
     description: str = Field(description="Detailed responsibilities and achievements")
