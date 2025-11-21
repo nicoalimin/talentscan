@@ -17,8 +17,8 @@ class ScreeningCriteria(BaseModel):
     intent: str = Field(description="What the user wants to do: 'screen', 'process', 'clarify', or 'chat'")
 
 
-def extract_criteria_with_llm(user_message: str) -> ScreeningCriteria:
-    """Use Gemini to extract screening criteria from user message."""
+def extract_criteria_with_llm(user_message: str, history: list[str] = []) -> ScreeningCriteria:
+    """Use Gemini to extract screening criteria from user message, using history for context."""
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         # Fallback to simple parsing if no API key
@@ -27,22 +27,27 @@ def extract_criteria_with_llm(user_message: str) -> ScreeningCriteria:
     llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0)
     parser = PydanticOutputParser(pydantic_object=ScreeningCriteria)
     
+    history_str = "\n".join(history[-5:]) # Last 5 messages
+    
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are an expert at extracting job screening criteria from user messages.
 Extract the role, seniority level, and tech stack from the user's message.
 
-For seniority, map similar terms:
-- "entry level", "beginner", "jr" → Junior
-- "intermediate", "mid-level" → Mid  
-- "senior", "sr", "experienced" → Senior
-- "lead", "principal", "staff" → Lead
-- "manager", "engineering manager" → Manager
+Use the conversation history to understand context.
+- If the user is answering a question (e.g., "Backend" after "What role?"), the intent is "screen" (or "clarify" with the extracted info).
+- If the user says "screen" or "search", intent is "screen".
+- If the user says "process" or "scan", intent is "process".
+- If the user is just greeting or asking general questions, intent is "chat".
 
-For intent:
-- If user wants to search/screen/find candidates → "screen"
-- If user mentions processing/scanning resumes → "process"
-- If message is unclear or just chatting → "clarify"
-- General questions or greetings → "chat"
+For seniority, map similar terms:
+- "entry level", "beginner", "jr" -> Junior
+- "intermediate", "mid-level" -> Mid  
+- "senior", "sr", "experienced" -> Senior
+- "lead", "principal", "staff" -> Lead
+- "manager", "engineering manager" -> Manager
+
+Previous conversation:
+{history}
 
 {format_instructions}"""),
         ("human", "{query}")
@@ -53,6 +58,7 @@ For intent:
     try:
         result = chain.invoke({
             "query": user_message,
+            "history": history_str,
             "format_instructions": parser.get_format_instructions()
         })
         return result
@@ -97,28 +103,38 @@ async def main(message: cl.Message):
     # Get current state
     awaiting = cl.user_session.get("awaiting", None)
     
+    # Get/Update history
+    history = cl.user_session.get("history", [])
+    history.append(f"User: {content}")
+    
     # If we're waiting for specific information, process the response
     if awaiting:
         if awaiting == "role":
             cl.user_session.set("role", content)
             cl.user_session.set("awaiting", None)
-            await cl.Message(content=f"✓ Got it! Role: **{content}**").send()
+            msg = f"✓ Got it! Role: **{content}**"
+            await cl.Message(content=msg).send()
+            history.append(f"Assistant: {msg}")
         elif awaiting == "seniority":
             # Use LLM to normalize seniority
-            criteria = extract_criteria_with_llm(f"seniority level: {content}")
+            criteria = extract_criteria_with_llm(f"seniority level: {content}", history)
             if criteria.seniority:
                 cl.user_session.set("seniority", criteria.seniority)
                 cl.user_session.set("awaiting", None)
-                await cl.Message(content=f"✓ Got it! Seniority: **{criteria.seniority}**").send()
+                msg = f"✓ Got it! Seniority: **{criteria.seniority}**"
+                await cl.Message(content=msg).send()
+                history.append(f"Assistant: {msg}")
             else:
-                await cl.Message(
-                    content=f"Please choose from: **Junior**, **Mid**, **Senior**, **Lead**, or **Manager**"
-                ).send()
+                msg = f"Please choose from: **Junior**, **Mid**, **Senior**, **Lead**, or **Manager**"
+                await cl.Message(content=msg).send()
+                history.append(f"Assistant: {msg}")
                 return
         elif awaiting == "tech_stack":
             cl.user_session.set("tech_stack", content)
             cl.user_session.set("awaiting", None)
-            await cl.Message(content=f"✓ Got it! Tech Stack: **{content}**").send()
+            msg = f"✓ Got it! Tech Stack: **{content}**"
+            await cl.Message(content=msg).send()
+            history.append(f"Assistant: {msg}")
     
     # Get current settings
     role = cl.user_session.get("role", "").strip()
@@ -135,13 +151,16 @@ async def main(message: cl.Message):
                 response += f"{i+1}. **{c.get('name')}** - Score: {c.get('score', 0):.2f}\n"
                 response += f"   - {c.get('general_proficiency')} | {c.get('years_of_experience')} yrs | {c.get('tech_stack')}\n\n"
             await cl.Message(content=response).send()
+            history.append("Assistant: [Longlist displayed]")
             return
         else:
-            await cl.Message(content="No previous search results. Please run a search first!").send()
+            msg = "No previous search results. Please run a search first!"
+            await cl.Message(content=msg).send()
+            history.append(f"Assistant: {msg}")
             return
     
-    # Use LLM to extract criteria from user message
-    criteria = extract_criteria_with_llm(content)
+    # Use LLM to extract criteria from user message with history
+    criteria = extract_criteria_with_llm(content, history)
     
     # Handle process intent
     if criteria.intent == "process" or content_lower == "process":
@@ -158,15 +177,17 @@ async def main(message: cl.Message):
             for msg in result_state["messages"]:
                 if msg != content:
                     await cl.Message(content=msg).send()
+                    history.append(f"Assistant: {msg}")
         return
     
     # Handle chat/greeting intent
     if criteria.intent == "chat":
-        await cl.Message(
-            content="Hello! 👋 I can help you screen candidates from resumes.\n\n"
-                    "Just tell me what you're looking for (e.g., 'I need a senior Python developer') "
-                    "or type **'screen'** to start a guided search!"
-        ).send()
+        msg = ("Hello! 👋 I can help you screen candidates from resumes.\n\n"
+               "Just tell me what you're looking for (e.g., 'I need a senior Python developer') "
+               "or type **'screen'** to start a guided search!")
+        await cl.Message(content=msg).send()
+        history.append(f"Assistant: {msg}")
+        cl.user_session.set("history", history)
         return
     
     # Update session with extracted criteria
@@ -175,19 +196,25 @@ async def main(message: cl.Message):
         cl.user_session.set("role", criteria.role)
         role = criteria.role
         updated = True
-        await cl.Message(content=f"✓ I understand you're looking for: **{criteria.role}**").send()
+        msg = f"✓ I understand you're looking for: **{criteria.role}**"
+        await cl.Message(content=msg).send()
+        history.append(f"Assistant: {msg}")
     
     if criteria.seniority and not seniority:
         cl.user_session.set("seniority", criteria.seniority)
         seniority = criteria.seniority
         updated = True
-        await cl.Message(content=f"✓ Seniority level: **{criteria.seniority}**").send()
+        msg = f"✓ Seniority level: **{criteria.seniority}**"
+        await cl.Message(content=msg).send()
+        history.append(f"Assistant: {msg}")
     
     if criteria.tech_stack and not tech_stack:
         cl.user_session.set("tech_stack", criteria.tech_stack)
         tech_stack = criteria.tech_stack
         updated = True
-        await cl.Message(content=f"✓ Tech stack: **{criteria.tech_stack}**").send()
+        msg = f"✓ Tech stack: **{criteria.tech_stack}**"
+        await cl.Message(content=msg).send()
+        history.append(f"Assistant: {msg}")
     
     # Check what's still missing
     missing = []
@@ -206,20 +233,19 @@ async def main(message: cl.Message):
             cl.user_session.set("awaiting", next_missing)
             
             if next_missing == "role":
-                await cl.Message(
-                    content="What **role** are you looking for?\n\n"
-                            "_(e.g., Backend Engineer, Frontend Developer, Data Scientist)_"
-                ).send()
+                msg = "What **role** are you looking for?\n\n_(e.g., Backend Engineer, Frontend Developer, Data Scientist)_"
+                await cl.Message(content=msg).send()
+                history.append(f"Assistant: {msg}")
             elif next_missing == "seniority":
-                await cl.Message(
-                    content="What **seniority level**?\n\n"
-                            "Choose from: **Junior**, **Mid**, **Senior**, **Lead**, or **Manager**"
-                ).send()
+                msg = "What **seniority level**?\n\nChoose from: **Junior**, **Mid**, **Senior**, **Lead**, or **Manager**"
+                await cl.Message(content=msg).send()
+                history.append(f"Assistant: {msg}")
             elif next_missing == "tech_stack":
-                await cl.Message(
-                    content="What **tech stack** or skills are you looking for?\n\n"
-                            "_(e.g., Python, Django, AWS or React, TypeScript, Node.js)_"
-                ).send()
+                msg = "What **tech stack** or skills are you looking for?\n\n_(e.g., Python, Django, AWS or React, TypeScript, Node.js)_"
+                await cl.Message(content=msg).send()
+                history.append(f"Assistant: {msg}")
+            
+            cl.user_session.set("history", history)
             return
         
         # All info available, proceed with screening
@@ -227,13 +253,14 @@ async def main(message: cl.Message):
         next_action = "screen"
     else:
         # Couldn't extract meaningful criteria
-        await cl.Message(
-            content="I'd be happy to help! To screen candidates, I need to know:\n\n"
-                    "1. **Role** (e.g., Backend Engineer)\n"
-                    "2. **Seniority** (Junior/Mid/Senior/Lead/Manager)\n"
-                    "3. **Tech Stack** (e.g., Python, Django, AWS)\n\n"
-                    "Just tell me what you're looking for, or type **'screen'** for a guided search!"
-        ).send()
+        msg = ("I'd be happy to help! To screen candidates, I need to know:\n\n"
+               "1. **Role** (e.g., Backend Engineer)\n"
+               "2. **Seniority** (Junior/Mid/Senior/Lead/Manager)\n"
+               "3. **Tech Stack** (e.g., Python, Django, AWS)\n\n"
+               "Just tell me what you're looking for, or type **'screen'** for a guided search!")
+        await cl.Message(content=msg).send()
+        history.append(f"Assistant: {msg}")
+        cl.user_session.set("history", history)
         return
     
     # Run the graph
@@ -286,6 +313,7 @@ async def main(message: cl.Message):
             response += f"\n_Found {len(longlist)} total candidates. Type 'show longlist' to see all._"
             
         await cl.Message(content=response).send()
+        history.append("Assistant: [Results displayed]")
     
     elif result_state.get("messages"):
         # Output messages from the node
@@ -293,4 +321,8 @@ async def main(message: cl.Message):
             # Avoid repeating the input message if it was passed through
             if msg != content: 
                 await cl.Message(content=msg).send()
+                history.append(f"Assistant: {msg}")
+    
+    # Save updated history
+    cl.user_session.set("history", history)
 
