@@ -10,7 +10,7 @@ An AI-powered resume screening agent built with LangChain, LangGraph, and Google
 - 🌐 **Multiple Interfaces**:
   - CLI for batch processing
   - FastAPI REST API
-  - Chainlit chat UI
+  - Streamlit chat UI
 - 🔄 **LangGraph Workflow**: Orchestrates processing and screening with state management
 
 ## Quick Start
@@ -71,7 +71,7 @@ make view-db
 # Run API server
 make server
 
-# Run Chainlit UI
+# Run Streamlit UI
 make ui
 
 # Clean cache files
@@ -105,10 +105,10 @@ Endpoints:
 - `POST /process` - Process resumes from directory
 - `GET /candidates` - List all candidates
 
-### Chainlit UI
+### Streamlit UI
 
 ```bash
-chainlit run chainlit_app.py
+streamlit run streamlit_app.py
 
 # Or use make
 make ui
@@ -128,7 +128,7 @@ talentscan/
 │   ├── create_dummies.py
 │   ├── verify_graph.py
 │   └── view_db.py
-├── chainlit_app.py      # Chainlit UI entrypoint
+├── streamlit_app.py     # Streamlit UI entrypoint
 ├── main.py              # CLI entry point
 ├── Makefile             # Development automation
 └── requirements.txt     # Dependencies

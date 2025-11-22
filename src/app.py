@@ -1,138 +1,152 @@
-import chainlit as cl
-from langchain_core.messages import HumanMessage
-from dotenv import load_dotenv
+"""Streamlit UI for the TalentScan resume screening agent."""
+
 import logging
 import os
+from typing import Dict, List
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Set up logging from environment variable
-# Use force=True to ensure it takes effect even if logging was already configured
-log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    force=True
-)
-logger = logging.getLogger(__name__)
-# Explicitly set logger level to ensure DEBUG messages are shown
-logger.setLevel(getattr(logging, log_level, logging.INFO))
+import streamlit as st
+from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage
 
 from src.graph import agent_graph
 
+# Load environment variables early
+load_dotenv()
 
-@cl.on_chat_start
-async def start():
-    settings = await cl.ChatSettings(
-        [
-            cl.input_widget.TextInput(id="role", label="Role", placeholder="e.g., Backend Engineer"),
-            cl.input_widget.Select(
-                id="seniority",
-                label="Seniority",
-                values=["Junior", "Mid", "Senior", "Lead", "Manager"],
-            ),
-            cl.input_widget.TextInput(id="tech_stack", label="Tech Stack", placeholder="e.g., Python, Django, AWS"),
-        ]
-    ).send()
-    
-    await cl.Message(
-        content="Welcome to the Resume Screening Agent! 🎯\n\n"
-                "I can help you screen candidates based on specific criteria.\n\n"
-                "You can either:\n"
-                "1. **Configure settings** in the panel and type 'screen' to search\n"
-                "2. **Tell me what you need** in natural language (e.g., 'Find me senior backend engineers with Python and AWS experience')\n\n"
-                "Type **'process'** first if you have new resumes to scan."
-    ).send()
+# Configure logging once at import time
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.INFO),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True,
+)
+logger = logging.getLogger(__name__)
+logger.setLevel(getattr(logging, log_level, logging.INFO))
 
-@cl.on_settings_update
-async def update_settings(settings):
-    # Check if role is changing
-    old_role = cl.user_session.get("role", "").strip()
-    new_role = settings.get("role", "").strip() if "role" in settings else old_role
-    
-    # Clear role-specific variables when role changes
-    if old_role and new_role and old_role.lower() != new_role.lower():
-        cl.user_session.set("tech_stack", "")
-        cl.user_session.set("seniority", "")
-    
-    for key, value in settings.items():
-        cl.user_session.set(key, value)
 
-@cl.on_message
-async def main(message: cl.Message):
-    """Main message handler - delegates all logic to the agent."""
-    logger.debug("=" * 60)
-    logger.debug("💬 CHAINLIT MESSAGE RECEIVED")
-    content = message.content.strip()
-    logger.debug(f"User message: {content}")
-    
-    # Get current session state
-    role = cl.user_session.get("role", "").strip()
-    seniority = cl.user_session.get("seniority", "").strip()
-    tech_stack = cl.user_session.get("tech_stack", "").strip()
-    logger.debug(f"Session state - Role: '{role}', Seniority: '{seniority}', Tech Stack: '{tech_stack}'")
-    
-    # Get/Update history
-    history = cl.user_session.get("history", [])
-    history.append(f"User: {content}")
-    
-    # Build user message with context
-    user_message = content
-    
-    # Add context about current session state if available
+def _init_session_state() -> None:
+    """Initialize Streamlit session state variables."""
+    if "messages" not in st.session_state:
+        st.session_state.messages: List[Dict[str, str]] = []
+
+    if "role" not in st.session_state:
+        st.session_state.role = ""
+
+    if "seniority" not in st.session_state:
+        st.session_state.seniority = ""
+
+    if "tech_stack" not in st.session_state:
+        st.session_state.tech_stack = ""
+
+
+def _render_sidebar() -> None:
+    """Render sidebar controls for role, seniority, and tech stack."""
+    st.sidebar.header("Screening Preferences")
+
+    st.session_state.role = st.sidebar.text_input(
+        "Role", value=st.session_state.role, placeholder="e.g., Backend Engineer"
+    )
+
+    st.session_state.seniority = st.sidebar.selectbox(
+        "Seniority",
+        options=["", "Junior", "Mid", "Senior", "Lead", "Manager"],
+        index=["", "Junior", "Mid", "Senior", "Lead", "Manager"].index(
+            st.session_state.seniority if st.session_state.seniority in {"Junior", "Mid", "Senior", "Lead", "Manager"} else ""
+        ),
+    )
+
+    st.session_state.tech_stack = st.sidebar.text_input(
+        "Tech Stack", value=st.session_state.tech_stack, placeholder="e.g., Python, Django, AWS"
+    )
+
+    if st.sidebar.button("Reset conversation"):
+        st.session_state.messages = []
+        st.experimental_rerun()
+
+
+def _build_user_prompt(user_input: str) -> str:
+    """Combine user input with current settings and history for the agent."""
     context_parts = []
-    if role:
-        context_parts.append(f"Current role setting: {role}")
-    if seniority:
-        context_parts.append(f"Current seniority setting: {seniority}")
-    if tech_stack:
-        context_parts.append(f"Current tech stack setting: {tech_stack}")
-    
+    if st.session_state.role:
+        context_parts.append(f"Current role setting: {st.session_state.role}")
+    if st.session_state.seniority:
+        context_parts.append(f"Current seniority setting: {st.session_state.seniority}")
+    if st.session_state.tech_stack:
+        context_parts.append(f"Current tech stack setting: {st.session_state.tech_stack}")
+
+    user_message = user_input
     if context_parts:
         user_message = f"{user_message}\n\nContext: {'; '.join(context_parts)}"
-    
-    # Add conversation history if available
-    if len(history) > 1:
-        conversation_history = "\n".join(history[-10:])
-        user_message = f"Conversation history:\n{conversation_history}\n\nUser message: {user_message}"
-    
-    # Invoke the agent graph directly - it handles all routing and decision-making
-    # The graph expects {"messages": [HumanMessage(...)]}
+
+    if st.session_state.messages:
+        conversation_history = "\n".join(
+            [
+                f"{m['role'].title()}: {m['content']}"
+                for m in st.session_state.messages[-10:]
+            ]
+        )
+        user_message = (
+            f"Conversation history:\n{conversation_history}\n\nUser message: {user_message}"
+        )
+
+    return user_message
+
+
+def _invoke_agent(user_message: str) -> str:
+    """Invoke the LangGraph agent and return the assistant's response."""
     if agent_graph is None:
         logger.error("Agent graph is None - GOOGLE_API_KEY not set")
-        await cl.Message(content="Agent not available. Please set GOOGLE_API_KEY in .env file.").send()
-        history.append("Assistant: Agent not available.")
-        cl.user_session.set("history", history)
-        return
-    
-    try:
-        logger.debug("Invoking agent_graph from Chainlit...")
-        result = agent_graph.invoke({"messages": [HumanMessage(content=user_message)]})
-        logger.debug("✓ Agent graph invocation completed from Chainlit")
-        
-        # Extract content from result
-        if isinstance(result, dict) and "messages" in result:
-            messages_list = result["messages"]
-            if messages_list and len(messages_list) > 0:
-                last_message = messages_list[-1]
-                agent_response = last_message.content if hasattr(last_message, 'content') else str(last_message)
-            else:
-                agent_response = str(result)
-        else:
-            agent_response = str(result)
-        
-        # Display agent's response (all formatting is handled in the graph)
-        logger.debug("📝 Displaying agent's response")
-        await cl.Message(content=agent_response).send()
-        history.append(f"Assistant: {agent_response}")
-    except Exception as e:
-        logger.error(f"✗ Error in Chainlit message handler: {str(e)}")
-        error_msg = f"Error: {str(e)}"
-        await cl.Message(content=error_msg).send()
-        history.append(f"Assistant: {error_msg}")
-    
-    # Save updated history
-    cl.user_session.set("history", history)
-    logger.debug("✅ CHAINLIT MESSAGE HANDLING COMPLETED")
-    logger.debug("=" * 60)
+        return "Agent not available. Please set GOOGLE_API_KEY in a .env file."
+
+    logger.debug("Invoking agent_graph from Streamlit UI...")
+    result = agent_graph.invoke({"messages": [HumanMessage(content=user_message)]})
+    logger.debug("Agent graph invocation completed")
+
+    if isinstance(result, dict) and "messages" in result:
+        messages_list = result["messages"]
+        if messages_list:
+            last_message = messages_list[-1]
+            return last_message.content if hasattr(last_message, "content") else str(last_message)
+
+    return str(result)
+
+
+def run_app() -> None:
+    """Run the Streamlit UI."""
+    st.set_page_config(page_title="TalentScan", page_icon="🧭", layout="wide")
+
+    _init_session_state()
+    _render_sidebar()
+
+    st.title("TalentScan Resume Screening Agent")
+    st.markdown(
+        """
+        Welcome to the Resume Screening Agent! 🎯
+
+        * Ask the agent to **process resumes** or **screen candidates**.
+        * Use the sidebar to set role, seniority, and tech stack preferences.
+        * Type "process" before screening if you've added new resumes.
+        """
+    )
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if prompt := st.chat_input("Send a message to the agent"):
+        logger.debug("User prompt received in Streamlit UI")
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        user_message = _build_user_prompt(prompt)
+
+        try:
+            response = _invoke_agent(user_message)
+        except Exception as error:  # pragma: no cover - UI feedback
+            logger.error("Error in Streamlit message handler: %s", error)
+            response = f"Error: {error}"
+
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.experimental_rerun()
+
+
+if __name__ == "__main__":
+    run_app()

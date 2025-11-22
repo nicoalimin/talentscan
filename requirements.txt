@@ -4,7 +4,7 @@ pypdf
 python-docx
 fastapi
 uvicorn
-chainlit
+streamlit
 langgraph
 pydantic
 python-dotenv
