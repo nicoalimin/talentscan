@@ -220,7 +220,8 @@ async def main(message: cl.Message):
     if criteria.intent == "analysis":
         msg = await cl.Message(content="Analyzing...").send()
         analysis_result = await perform_deep_analysis(content, history)
-        await msg.update(content=analysis_result)
+        msg.content = analysis_result
+        await msg.update()
         history.append(f"Assistant: {analysis_result}")
         cl.user_session.set("history", history)
         return
