@@ -6,19 +6,27 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from src.agent import ResumeScreeningAgent
 from src.processor import process_resumes
-from src.database import get_all_candidates, get_candidates_by_names
+from src.database import get_all_candidates, get_candidates_by_names, get_candidates_by_ids
+from dotenv import load_dotenv
 import os
 import json
 import logging
 import re
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Set up logging from environment variable
+# Use force=True to ensure it takes effect even if logging was already configured
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, log_level, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True
 )
 logger = logging.getLogger(__name__)
+# Explicitly set logger level to ensure DEBUG messages are shown
+logger.setLevel(getattr(logging, log_level, logging.INFO))
 
 
 # Define tools for the agent
@@ -73,7 +81,8 @@ def get_all_candidates_tool() -> str:
         months = total_months % 12
         exp_display = f"{years}y {months}m" if months else f"{years} years"
         
-        result_lines.append(f"{i}. **{c.get('name', 'Unknown')}**")
+        candidate_id = c.get('id', '')
+        result_lines.append(f"{i}. **{c.get('name', 'Unknown')}** [ID:{candidate_id}]")
         result_lines.append(f"   - Role: {c.get('general_proficiency', 'N/A')}")
         result_lines.append(f"   - Experience: {exp_display} across {c.get('total_companies', 0)} companies")
         result_lines.append(f"   - Roles: {c.get('roles_served', 'N/A')}")
@@ -96,83 +105,82 @@ def get_all_candidates_tool() -> str:
     return "\n".join(result_lines)
 
 
-def extract_candidate_names_from_history(query: str, conversation_history: str, all_candidate_names: List[str]) -> List[str]:
-    """Extract candidate names mentioned in the query and conversation history.
+def extract_candidate_ids_from_history(query: str, conversation_history: str) -> List[int]:
+    """Extract candidate IDs mentioned in the query and conversation history.
+    
+    This function looks for candidate IDs in the format [ID:123] that are embedded
+    in the formatted candidate display output.
     
     Args:
         query: The user's current query
         conversation_history: Recent conversation history
-        all_candidate_names: List of all candidate names in the database
     
     Returns:
-        List of candidate names that were mentioned
+        List of candidate IDs that were mentioned
     """
-    if not all_candidate_names:
-        return []
-    
     # Combine query and history for analysis
     combined_text = f"{conversation_history}\n{query}"
+    
+    mentioned_ids = set()
+    
+    # Pattern 1: Extract IDs from formatted candidate lists (e.g., "### 1. Name [ID:123]")
+    # Look for the pattern [ID:number]
+    id_pattern = r'\[ID:(\d+)\]'
+    id_matches = re.findall(id_pattern, combined_text)
+    for id_str in id_matches:
+        try:
+            candidate_id = int(id_str)
+            mentioned_ids.add(candidate_id)
+        except ValueError:
+            continue
+    
+    # Pattern 2: If query mentions "top N", "first N", etc., extract IDs from recent candidate lists
     combined_text_lower = combined_text.lower()
-    
-    # Build a mapping of normalized names to original names
-    name_map = {}
-    for name in all_candidate_names:
-        name_lower = name.lower()
-        name_map[name_lower] = name
-        # Also add variations (first name only, last name only)
-        name_parts = name_lower.split()
-        if len(name_parts) >= 2:
-            name_map[name_parts[0]] = name  # First name
-            name_map[name_parts[-1]] = name  # Last name
-    
-    mentioned_names = set()
-    
-    # Pattern 1: Look for formatted candidate lists (e.g., "### 1. Name" or "1. Name")
-    for name in all_candidate_names:
-        name_lower = name.lower()
-        # Pattern: "### N. Name" or "N. Name" where N is a number
-        pattern = rf'(?:###\s*)?\d+\.\s*{re.escape(name_lower)}'
-        if re.search(pattern, combined_text_lower, re.IGNORECASE):
-            mentioned_names.add(name)
-    
-    # Pattern 2: Look for explicit mentions in query (e.g., "candidate X", "X is", "X's")
-    for name in all_candidate_names:
-        name_lower = name.lower()
-        name_parts = name_lower.split()
-        
-        # Check for full name mentions
-        if len(name_parts) >= 2:
-            # Full name match
-            full_name_pattern = rf'\b(?:candidate\s+)?{re.escape(name_lower)}\b'
-            if re.search(full_name_pattern, combined_text_lower):
-                mentioned_names.add(name)
-        else:
-            # Single name - be more careful
-            single_name_pattern = rf'\b(?:candidate\s+)?{re.escape(name_lower)}\b'
-            if re.search(single_name_pattern, combined_text_lower):
-                mentioned_names.add(name)
-    
-    # Pattern 3: Look for references like "top 3", "first candidate", etc. and extract from formatted lists
-    # If query mentions "top N" or "first N" candidates, extract names from recent candidate lists
     top_n_pattern = r'(?:top|first|best)\s+(\d+)'
     top_n_match = re.search(top_n_pattern, combined_text_lower)
     if top_n_match:
         n = int(top_n_match.group(1))
-        # Try to extract candidate names from formatted lists in history
-        # Look for patterns like "### 1. Name", "### 2. Name", etc.
-        list_pattern = r'###\s*(\d+)\.\s*([^\n(]+)'
+        # Extract IDs from formatted lists up to position N
+        # Pattern: "### N. Name [ID:123]"
+        list_pattern = r'###\s*(\d+)\.\s*[^\n]*\[ID:(\d+)\]'
         matches = re.findall(list_pattern, combined_text)
-        for num_str, name_part in matches:
+        for num_str, id_str in matches:
             num = int(num_str)
             if num <= n:
-                # Try to match this name part to a candidate name
-                name_part_clean = name_part.strip().split('(')[0].strip()
-                for candidate_name in all_candidate_names:
-                    if name_part_clean.lower() in candidate_name.lower() or candidate_name.lower() in name_part_clean.lower():
-                        mentioned_names.add(candidate_name)
-                        break
+                try:
+                    candidate_id = int(id_str)
+                    mentioned_ids.add(candidate_id)
+                except ValueError:
+                    continue
     
-    return list(mentioned_names)
+    # Pattern 3: If query mentions candidate names, try to find their IDs from recent lists
+    # This is a fallback for when names are mentioned but IDs aren't in the format
+    # We'll look for name mentions and try to find the corresponding ID from recent lists
+    all_candidates = get_all_candidates()
+    name_to_id_map = {c.get('name', '').lower(): c.get('id') for c in all_candidates if c.get('name') and c.get('id')}
+    
+    # Look for candidate name mentions in the query
+    for name, candidate_id in name_to_id_map.items():
+        # Check if name is mentioned in query (not in history, as history should have IDs)
+        name_pattern = rf'\b(?:candidate\s+)?{re.escape(name)}\b'
+        if re.search(name_pattern, query.lower()):
+            # Try to find this candidate's ID in recent history
+            # Look for pattern: "Name [ID:123]" or "### N. Name [ID:123]"
+            name_id_pattern = rf'{re.escape(name)}[^\n]*\[ID:(\d+)\]'
+            name_id_match = re.search(name_id_pattern, combined_text, re.IGNORECASE)
+            if name_id_match:
+                try:
+                    found_id = int(name_id_match.group(1))
+                    mentioned_ids.add(found_id)
+                except ValueError:
+                    # If ID not found in history, use the mapped ID as fallback
+                    if candidate_id:
+                        mentioned_ids.add(candidate_id)
+            elif candidate_id:
+                # Fallback: use the mapped ID if we can't find it in history
+                mentioned_ids.add(candidate_id)
+    
+    return list(mentioned_ids)
 
 
 @tool
@@ -197,19 +205,15 @@ def perform_analysis_tool(query: str, conversation_history: str = "") -> str:
         logger.error("Cannot perform analysis: GOOGLE_API_KEY not set")
         return "I cannot perform analysis without a valid API key."
     
-    # Fetch all candidate names to identify which ones are mentioned
-    logger.debug("Fetching candidate names to identify mentions...")
-    all_candidates = get_all_candidates()
-    all_candidate_names = [c.get('name', '') for c in all_candidates if c.get('name')]
+    # Extract candidate IDs mentioned in history and query
+    logger.debug("Extracting candidate IDs from conversation history...")
+    mentioned_ids = extract_candidate_ids_from_history(query, conversation_history)
     
-    # Extract candidate names mentioned in history and query
-    mentioned_names = extract_candidate_names_from_history(query, conversation_history, all_candidate_names)
-    
-    # Fetch full details for mentioned candidates
+    # Fetch full details for mentioned candidates using their IDs
     candidate_details = []
-    if mentioned_names:
-        logger.debug(f"Found mentions of candidates: {mentioned_names}")
-        candidate_details = get_candidates_by_names(mentioned_names)
+    if mentioned_ids:
+        logger.debug(f"Found mentions of candidate IDs: {mentioned_ids}")
+        candidate_details = get_candidates_by_ids(mentioned_ids)
         logger.debug(f"Fetched full details for {len(candidate_details)} candidates")
     
     logger.debug("Performing deep analysis with LLM...")
@@ -461,7 +465,9 @@ def format_candidates_for_display(candidates: list, title: str = "Candidates") -
                 skill_parts.append(low_conf)
             formatted_skills = "; ".join(skill_parts) if skill_parts else "N/A"
         
-        response += f"### {i+1}. {c.get('name')} (Score: {c.get('score', 0):.2f})\n"
+        # Include candidate ID as a hidden marker for extraction
+        candidate_id = c.get('id', '')
+        response += f"### {i+1}. {c.get('name')} (Score: {c.get('score', 0):.2f}) [ID:{candidate_id}]\n"
         response += f"- **Role:** {formatted_role}\n"
         response += f"- **Total Experience:** {formatted_experience}"
         if c.get('total_companies', 0) > 0:

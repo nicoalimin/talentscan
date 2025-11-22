@@ -1,16 +1,25 @@
 import chainlit as cl
-from src.graph import agent_graph
 from langchain_core.messages import HumanMessage
+from dotenv import load_dotenv
 import logging
 import os
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Set up logging from environment variable
+# Use force=True to ensure it takes effect even if logging was already configured
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, log_level, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True
 )
 logger = logging.getLogger(__name__)
+# Explicitly set logger level to ensure DEBUG messages are shown
+logger.setLevel(getattr(logging, log_level, logging.INFO))
+
+from src.graph import agent_graph
 
 
 @cl.on_chat_start
