@@ -8,7 +8,7 @@ help:
 	@echo "  make lint            - Run code linter"
 	@echo "  make run             - Run CLI application"
 	@echo "  make server          - Run API server"
-	@echo "  make ui              - Run Chainlit UI"
+        @echo "  make ui              - Run Streamlit UI"
 	@echo "  make view-db         - View database contents"
 	@echo "  make verify-graph    - Verify LangGraph workflow"
 	@echo "  make create-dummies  - Create dummy resume files"
@@ -54,10 +54,10 @@ server:
 	@echo "Starting API server on http://localhost:8000"
 	./venv/bin/python main.py --server
 
-# Run Chainlit UI
+# Run Streamlit UI
 ui:
-	@echo "Starting Chainlit UI with hot reload..."
-	./venv/bin/chainlit run chainlit_app.py --watch
+        @echo "Starting Streamlit UI..."
+        ./venv/bin/streamlit run streamlit_app.py
 
 # View database contents
 view-db:
