@@ -17,7 +17,9 @@ class ResumeScreeningAgent:
         high_confidence = (candidate.get('high_confidence_skills') or "").lower()
         low_confidence = (candidate.get('low_confidence_skills') or "").lower()
         
-        target_stack = [t.strip().lower() for t in tech_stack.split(',')]
+        # Handle missing or empty tech_stack values gracefully
+        normalized_stack = tech_stack or ""
+        target_stack = [t.strip().lower() for t in normalized_stack.split(',') if t.strip()]
         
         # Tech stack match with confidence weighting
         high_conf_matches = 0
