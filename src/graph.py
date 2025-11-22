@@ -245,8 +245,8 @@ def perform_analysis_tool(query: str, conversation_history: str = "") -> str:
             candidate_details_text += "\n"
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a Senior Talent Intelligence Analyst.
-Your goal is to provide deep, insightful analysis based on the user's query and the conversation history.
+        ("system", """You are a Senior Talent Intelligence Analyst with a passion for thorough, comprehensive research and analysis.
+Your goal is to provide deep, insightful, and VERBOSE analysis based on the user's query and the conversation history.
 
 You have access to the context of the conversation, including previous candidate lists and screening criteria.
 Use this to answer questions like:
@@ -255,7 +255,20 @@ Use this to answer questions like:
 - "What are the common skills missing in this pool?"
 - "How should I adjust my criteria to get better matches?"
 
-Be analytical, objective, and detailed. If you need more info, say so.
+IMPORTANT: Be EXTREMELY VERBOSE and detailed in your responses. This is especially important for deep research tasks.
+- Explain your reasoning step-by-step
+- Provide extensive context and background information
+- Include detailed comparisons, examples, and evidence
+- Break down complex analyses into multiple sections with clear explanations
+- Don't hesitate to include verbose details, even if they seem obvious
+- Show your work - explain how you arrived at conclusions
+- Provide comprehensive insights, not just brief summaries
+- Include relevant details from the candidate data, work experience, skills, and other attributes
+- For comparisons, provide detailed side-by-side analysis with extensive commentary
+- For "why" questions, provide thorough explanations with multiple supporting points
+
+Be analytical, objective, and DETAILED. Verbosity is encouraged - it's better to provide too much detail than too little.
+If you need more info, say so, but also provide extensive analysis with what you have.
 """),
         ("human", f"""Context (History):
 {conversation_history}
@@ -273,8 +286,8 @@ User Query:
 # Store tool results for extraction
 _tool_results = {}
 
-def format_candidates_with_llm(candidates: list, role: str, seniority: str, tech_stack: str) -> list:
-    """Use LLM to format candidates and extract role, total experience, seniority, and skills.
+def format_candidates_with_llm(candidates: list, role: str, seniority: str, tech_stack: str) -> str:
+    """Use LLM to format candidates into a readable markdown string.
     
     Args:
         candidates: List of candidate dictionaries from screening
@@ -283,27 +296,30 @@ def format_candidates_with_llm(candidates: list, role: str, seniority: str, tech
         tech_stack: Target tech stack for context
     
     Returns:
-        List of formatted candidate dictionaries with LLM-generated summaries
+        Formatted markdown string from LLM
     """
     if not candidates:
-        return []
+        return "## Top Candidates\n\nNo candidates found."
     
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         logger.warning("Cannot format candidates with LLM: GOOGLE_API_KEY not set")
-        return candidates
+        return "## Top Candidates\n\nCannot format candidates: API key not set."
     
     try:
         llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.2)
         
-        # Prepare minimal high-level candidate data for LLM (detailed analysis only in perform_analysis_tool)
+        # Prepare candidate data for LLM
         candidates_data = []
         for c in candidates:
             candidate_info = {
                 "name": c.get('name', 'Unknown'),
+                "id": c.get('id', ''),
                 "total_months_experience": c.get('total_months_experience', 0),
+                "total_companies": c.get('total_companies', 0),
                 "general_proficiency": c.get('general_proficiency', ''),
                 "high_confidence_skills": c.get('high_confidence_skills', ''),
+                "low_confidence_skills": c.get('low_confidence_skills', ''),
                 "ai_summary": c.get('ai_summary', ''),
                 "score": c.get('score', 0)
             }
@@ -312,33 +328,29 @@ def format_candidates_with_llm(candidates: list, role: str, seniority: str, tech
         candidates_json = json.dumps(candidates_data, indent=2)
         
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert talent analyst. Format candidate high-level information into a clear, structured summary.
+            ("system", """You are an expert talent analyst. Format candidate information into a clear, structured, and DETAILED markdown summary.
 
-For each candidate, extract and summarize:
-1. **Role**: The primary role/position (from general_proficiency, normalized to a clear job title)
-2. **Total Experience**: Total years and months of experience (format as "X years Y months" or "X years")
-3. **Seniority**: Assessed seniority level (Junior/Mid/Senior/Lead/Manager) based on experience
-4. **Skills**: Key skills from high_confidence_skills relevant to the target role and tech stack
+For each candidate, include:
+- Name and score (with explanation of why this score was achieved)
+- Role (from general_proficiency, normalized to a clear job title)
+- Total experience (format as "X years Y months" or "X years") with detailed breakdown
+- Seniority level (Junior/Mid/Senior/Lead/Manager) based on experience, with reasoning
+- Key skills relevant to the target role and tech stack (be comprehensive and detailed)
+- Detailed summary highlighting fit for the target role, including specific examples and evidence
+- Additional context about their background, work history, and qualifications
 
-Be concise and accurate. Use only the provided high-level summary data.
-
-Return a JSON array where each candidate has:
-- formatted_role: Clear job title/role
-- formatted_experience: Human-readable experience (e.g., "5 years 3 months")
-- formatted_seniority: Assessed seniority level
-- formatted_skills: Comma-separated list of key relevant skills
-- summary: Brief 1-2 sentence summary highlighting fit for the target role (use ai_summary if helpful)
-
-Return ONLY the formatted fields, not the original data."""),
+Be VERBOSE and provide extensive details. Include candidate ID in format [ID:123] for each candidate.
+Use markdown formatting with headers (###) for each candidate.
+Don't be brief - provide thorough, detailed information about each candidate."""),
             ("human", """Target Role: {role}
 Target Seniority: {seniority}
 Target Tech Stack: {tech_stack}
 
-Format these candidates (high-level summary only):
+Format these candidates as a markdown list:
 
 {candidates_json}
 
-Return ONLY a valid JSON array with the same number of elements, each containing ONLY the formatted fields (formatted_role, formatted_experience, formatted_seniority, formatted_skills, summary)."""),
+Return a formatted markdown string with all candidates."""),
         ])
         
         chain = prompt | llm
@@ -349,127 +361,12 @@ Return ONLY a valid JSON array with the same number of elements, each containing
             "candidates_json": candidates_json
         })
         
-        # Parse LLM response
-        content = response.content.strip()
-        
-        # Extract JSON from response (handle markdown code blocks)
-        json_str = None
-        
-        # Try to find JSON in markdown code blocks first
-        json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', content, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try to find JSON array by looking for balanced brackets
-            # Find the first [ and then find the matching ]
-            start_idx = content.find('[')
-            if start_idx != -1:
-                bracket_count = 0
-                for i in range(start_idx, len(content)):
-                    if content[i] == '[':
-                        bracket_count += 1
-                    elif content[i] == ']':
-                        bracket_count -= 1
-                        if bracket_count == 0:
-                            json_str = content[start_idx:i+1]
-                            break
-            else:
-                json_str = content
-        
-        if not json_str:
-            logger.warning("Could not extract JSON from LLM response")
-            return candidates
-        
-        try:
-            formatted_candidates = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from LLM response: {e}")
-            logger.debug(f"JSON string: {json_str[:500]}...")
-            return candidates
-        
-        # Validate that we got the right number of candidates
-        if len(formatted_candidates) != len(candidates):
-            logger.warning(f"Mismatch in candidate count: expected {len(candidates)}, got {len(formatted_candidates)}")
-            # Only merge what we have
-            max_len = min(len(formatted_candidates), len(candidates))
-        else:
-            max_len = len(candidates)
-        
-        # Merge formatted fields back into original candidates
-        for i in range(max_len):
-            formatted_candidate = formatted_candidates[i]
-            candidates[i].update({
-                "formatted_role": formatted_candidate.get("formatted_role", candidates[i].get('general_proficiency', '')),
-                "formatted_experience": formatted_candidate.get("formatted_experience", ""),
-                "formatted_seniority": formatted_candidate.get("formatted_seniority", candidates[i].get('general_proficiency', '')),
-                "formatted_skills": formatted_candidate.get("formatted_skills", ""),
-                "formatted_summary": formatted_candidate.get("summary", candidates[i].get('ai_summary', ''))
-            })
-        
-        logger.debug(f"✓ Formatted {max_len} candidates with LLM")
-        return candidates
+        logger.debug(f"✓ Formatted {len(candidates)} candidates with LLM")
+        return response.content.strip()
         
     except Exception as e:
         logger.error(f"Error formatting candidates with LLM: {str(e)}")
-        logger.debug(f"LLM response: {response.content if 'response' in locals() else 'N/A'}")
-        return candidates  # Return original candidates if formatting fails
-
-
-def format_candidates_for_display(candidates: list, title: str = "Candidates") -> str:
-    """Format candidates into a readable markdown string for display.
-    
-    Args:
-        candidates: List of candidate dictionaries (should already be LLM-formatted)
-        title: Title for the section
-    
-    Returns:
-        Formatted markdown string
-    """
-    if not candidates:
-        return f"## {title}\n\nNo candidates found."
-    
-    response = f"## {title} (Top {len(candidates)})\n\n"
-    for i, c in enumerate(candidates):
-        # Use LLM-formatted fields if available, fallback to original fields
-        formatted_role = c.get('formatted_role') or c.get('general_proficiency', 'N/A')
-        formatted_experience = c.get('formatted_experience') or ""
-        formatted_seniority = c.get('formatted_seniority') or c.get('general_proficiency', 'N/A')
-        formatted_skills = c.get('formatted_skills') or ""
-        formatted_summary = c.get('formatted_summary') or c.get('ai_summary', '')
-        
-        # Fallback: calculate experience if not formatted
-        if not formatted_experience:
-            total_months = c.get('total_months_experience', 0)
-            years = total_months // 12
-            months = total_months % 12
-            formatted_experience = f"{years}y {months}m" if months else f"{years} years"
-        
-        # Fallback: use skills if not formatted
-        if not formatted_skills:
-            high_conf = c.get('high_confidence_skills', '')
-            low_conf = c.get('low_confidence_skills', '')
-            skill_parts = []
-            if high_conf:
-                skill_parts.append(f"✓ {high_conf}")
-            if low_conf:
-                skill_parts.append(low_conf)
-            formatted_skills = "; ".join(skill_parts) if skill_parts else "N/A"
-        
-        # Include candidate ID as a hidden marker for extraction
-        candidate_id = c.get('id', '')
-        response += f"### {i+1}. {c.get('name')} (Score: {c.get('score', 0):.2f}) [ID:{candidate_id}]\n"
-        response += f"- **Role:** {formatted_role}\n"
-        response += f"- **Total Experience:** {formatted_experience}"
-        if c.get('total_companies', 0) > 0:
-            response += f" across {c.get('total_companies', 0)} companies"
-        response += "\n"
-        response += f"- **Seniority:** {formatted_seniority}\n"
-        response += f"- **Skills:** {formatted_skills}\n"
-        if formatted_summary:
-            response += f"- **Summary:** {formatted_summary}\n"
-        response += "\n"
-    
-    return response
+        return f"## Top Candidates\n\nError formatting candidates: {str(e)}"
 
 
 # Wrap screen_candidates_tool to capture results
@@ -495,16 +392,11 @@ def screen_candidates_tool_with_capture(role: str, seniority: str, tech_stack: s
     logger.debug("Formatting candidates with LLM...")
     candidates = result.get("candidates", [])
     
-    formatted_candidates = format_candidates_with_llm(candidates, role, seniority, tech_stack)
+    formatted_response = format_candidates_with_llm(candidates, role, seniority, tech_stack)
     
-    result["candidates"] = formatted_candidates
-    
+    result["candidates"] = candidates
     _tool_results["screen_result"] = result
-    candidate_count = len(formatted_candidates)
-    logger.debug(f"✓ Screening completed: {candidate_count} candidates")
-    
-    # Format and return the results as a readable string
-    formatted_response = format_candidates_for_display(formatted_candidates, "Top Candidates")
+    logger.debug(f"✓ Screening completed: {len(candidates)} candidates")
     
     return formatted_response
 
@@ -538,8 +430,9 @@ IMPORTANT GUIDELINES:
 - For analytical questions (why, how, compare, analyze), use perform_analysis_tool
 - Be conversational, helpful, and provide clear feedback about what you're doing
 - If the user provides partial information (e.g., just role), ask for the missing pieces before screening
+- BE VERBOSE: Especially when performing deep research or analysis, provide extensive details, explanations, and context. Don't be brief - users appreciate thorough responses with comprehensive information.
 
-Always be proactive and helpful. Guide users through the process naturally."""
+Always be proactive and helpful. Guide users through the process naturally. When doing deep research, err on the side of providing too much detail rather than too little."""
     
     # Create the agent with all tools
     agent = create_agent(
