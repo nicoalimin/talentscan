@@ -6,3 +6,4 @@ resumes
 *.db
 .DS_Store
 .env
+.langgraph_api
