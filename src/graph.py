@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, List
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
@@ -6,7 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from src.agent import ResumeScreeningAgent
 from src.processor import process_resumes
-from src.database import get_all_candidates
+from src.database import get_all_candidates, get_candidates_by_names
 import os
 import json
 import logging
@@ -96,6 +96,85 @@ def get_all_candidates_tool() -> str:
     return "\n".join(result_lines)
 
 
+def extract_candidate_names_from_history(query: str, conversation_history: str, all_candidate_names: List[str]) -> List[str]:
+    """Extract candidate names mentioned in the query and conversation history.
+    
+    Args:
+        query: The user's current query
+        conversation_history: Recent conversation history
+        all_candidate_names: List of all candidate names in the database
+    
+    Returns:
+        List of candidate names that were mentioned
+    """
+    if not all_candidate_names:
+        return []
+    
+    # Combine query and history for analysis
+    combined_text = f"{conversation_history}\n{query}"
+    combined_text_lower = combined_text.lower()
+    
+    # Build a mapping of normalized names to original names
+    name_map = {}
+    for name in all_candidate_names:
+        name_lower = name.lower()
+        name_map[name_lower] = name
+        # Also add variations (first name only, last name only)
+        name_parts = name_lower.split()
+        if len(name_parts) >= 2:
+            name_map[name_parts[0]] = name  # First name
+            name_map[name_parts[-1]] = name  # Last name
+    
+    mentioned_names = set()
+    
+    # Pattern 1: Look for formatted candidate lists (e.g., "### 1. Name" or "1. Name")
+    for name in all_candidate_names:
+        name_lower = name.lower()
+        # Pattern: "### N. Name" or "N. Name" where N is a number
+        pattern = rf'(?:###\s*)?\d+\.\s*{re.escape(name_lower)}'
+        if re.search(pattern, combined_text_lower, re.IGNORECASE):
+            mentioned_names.add(name)
+    
+    # Pattern 2: Look for explicit mentions in query (e.g., "candidate X", "X is", "X's")
+    for name in all_candidate_names:
+        name_lower = name.lower()
+        name_parts = name_lower.split()
+        
+        # Check for full name mentions
+        if len(name_parts) >= 2:
+            # Full name match
+            full_name_pattern = rf'\b(?:candidate\s+)?{re.escape(name_lower)}\b'
+            if re.search(full_name_pattern, combined_text_lower):
+                mentioned_names.add(name)
+        else:
+            # Single name - be more careful
+            single_name_pattern = rf'\b(?:candidate\s+)?{re.escape(name_lower)}\b'
+            if re.search(single_name_pattern, combined_text_lower):
+                mentioned_names.add(name)
+    
+    # Pattern 3: Look for references like "top 3", "first candidate", etc. and extract from formatted lists
+    # If query mentions "top N" or "first N" candidates, extract names from recent candidate lists
+    top_n_pattern = r'(?:top|first|best)\s+(\d+)'
+    top_n_match = re.search(top_n_pattern, combined_text_lower)
+    if top_n_match:
+        n = int(top_n_match.group(1))
+        # Try to extract candidate names from formatted lists in history
+        # Look for patterns like "### 1. Name", "### 2. Name", etc.
+        list_pattern = r'###\s*(\d+)\.\s*([^\n(]+)'
+        matches = re.findall(list_pattern, combined_text)
+        for num_str, name_part in matches:
+            num = int(num_str)
+            if num <= n:
+                # Try to match this name part to a candidate name
+                name_part_clean = name_part.strip().split('(')[0].strip()
+                for candidate_name in all_candidate_names:
+                    if name_part_clean.lower() in candidate_name.lower() or candidate_name.lower() in name_part_clean.lower():
+                        mentioned_names.add(candidate_name)
+                        break
+    
+    return list(mentioned_names)
+
+
 @tool
 def perform_analysis_tool(query: str, conversation_history: str = "") -> str:
     """Perform deep analysis on candidates, trends, or answer complex questions about the talent pool.
@@ -118,9 +197,58 @@ def perform_analysis_tool(query: str, conversation_history: str = "") -> str:
         logger.error("Cannot perform analysis: GOOGLE_API_KEY not set")
         return "I cannot perform analysis without a valid API key."
     
+    # Fetch all candidate names to identify which ones are mentioned
+    logger.debug("Fetching candidate names to identify mentions...")
+    all_candidates = get_all_candidates()
+    all_candidate_names = [c.get('name', '') for c in all_candidates if c.get('name')]
+    
+    # Extract candidate names mentioned in history and query
+    mentioned_names = extract_candidate_names_from_history(query, conversation_history, all_candidate_names)
+    
+    # Fetch full details for mentioned candidates
+    candidate_details = []
+    if mentioned_names:
+        logger.debug(f"Found mentions of candidates: {mentioned_names}")
+        candidate_details = get_candidates_by_names(mentioned_names)
+        logger.debug(f"Fetched full details for {len(candidate_details)} candidates")
+    
     logger.debug("Performing deep analysis with LLM...")
     
     llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.2)
+    
+    # Format candidate details for inclusion in prompt
+    candidate_details_text = ""
+    if candidate_details:
+        candidate_details_text = "\n\n## Full Candidate Details:\n\n"
+        for candidate in candidate_details:
+            candidate_details_text += f"### {candidate.get('name', 'Unknown')}\n"
+            candidate_details_text += f"- Age: {candidate.get('age', 'N/A')}\n"
+            candidate_details_text += f"- Total Experience: {candidate.get('total_months_experience', 0)} months ({candidate.get('total_months_experience', 0) // 12} years {(candidate.get('total_months_experience', 0) % 12)} months)\n"
+            candidate_details_text += f"- Total Companies: {candidate.get('total_companies', 0)}\n"
+            candidate_details_text += f"- Roles Served: {candidate.get('roles_served', 'N/A')}\n"
+            candidate_details_text += f"- General Proficiency: {candidate.get('general_proficiency', 'N/A')}\n"
+            candidate_details_text += f"- Skillset: {candidate.get('skillset', 'N/A')}\n"
+            candidate_details_text += f"- High Confidence Skills: {candidate.get('high_confidence_skills', 'N/A')}\n"
+            candidate_details_text += f"- Low Confidence Skills: {candidate.get('low_confidence_skills', 'N/A')}\n"
+            candidate_details_text += f"- Tech Stack: {candidate.get('tech_stack', 'N/A')}\n"
+            candidate_details_text += f"- AI Summary: {candidate.get('ai_summary', 'N/A')}\n"
+            
+            # Include work experience details
+            work_experiences = candidate.get('work_experience', [])
+            if work_experiences:
+                candidate_details_text += f"\n#### Work Experience ({len(work_experiences)} positions):\n"
+                for i, exp in enumerate(work_experiences, 1):
+                    candidate_details_text += f"\n{i}. **{exp.get('role', 'N/A')}** at {exp.get('company_name', 'N/A')}\n"
+                    candidate_details_text += f"   - Duration: {exp.get('months_of_service', 0)} months ({exp.get('start_date', 'N/A')} to {exp.get('end_date', 'N/A')})\n"
+                    candidate_details_text += f"   - Skillset: {exp.get('skillset', 'N/A')}\n"
+                    candidate_details_text += f"   - Tech Stack: {exp.get('tech_stack', 'N/A')}\n"
+                    if exp.get('description'):
+                        candidate_details_text += f"   - Description: {exp.get('description', 'N/A')}\n"
+                    if exp.get('projects'):
+                        projects = exp.get('projects', [])
+                        if isinstance(projects, list) and projects:
+                            candidate_details_text += f"   - Projects: {', '.join(projects) if isinstance(projects[0], str) else str(projects)}\n"
+            candidate_details_text += "\n"
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are a Senior Talent Intelligence Analyst.
@@ -137,7 +265,7 @@ Be analytical, objective, and detailed. If you need more info, say so.
 """),
         ("human", f"""Context (History):
 {conversation_history}
-
+{candidate_details_text}
 User Query:
 {query}""")
     ])

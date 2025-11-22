@@ -86,6 +86,56 @@ def get_candidate_by_filename(filename: str) -> Optional[Dict]:
         return dict(row)
     return None
 
+def get_candidates_by_names(names: List[str]) -> List[Dict]:
+    """Get candidates by their names (case-insensitive partial match).
+    
+    Args:
+        names: List of candidate names to search for
+    
+    Returns:
+        List of candidate dictionaries with their work experiences
+    """
+    if not names:
+        return []
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Build query with LIKE for partial matching (case-insensitive)
+    placeholders = []
+    params = []
+    for name in names:
+        placeholders.append('LOWER(name) LIKE LOWER(?)')
+        params.append(f'%{name}%')
+    
+    query = f'SELECT * FROM candidates WHERE {" OR ".join(placeholders)}'
+    cursor.execute(query, params)
+    candidates = [dict(row) for row in cursor.fetchall()]
+    
+    # Get work experiences for each candidate
+    for candidate in candidates:
+        cursor.execute('''
+            SELECT * FROM work_experience 
+            WHERE candidate_id = ?
+            ORDER BY start_date DESC
+        ''', (candidate['id'],))
+        
+        work_exps = []
+        for row in cursor.fetchall():
+            work_exp = dict(row)
+            # Parse projects JSON
+            if work_exp.get('projects'):
+                try:
+                    work_exp['projects'] = json.loads(work_exp['projects'])
+                except:
+                    work_exp['projects'] = []
+            work_exps.append(work_exp)
+        
+        candidate['work_experience'] = work_exps
+    
+    conn.close()
+    return candidates
+
 def get_all_candidates() -> List[Dict]:
     """Get all candidates with their work experiences."""
     conn = get_db_connection()
