@@ -113,3 +113,43 @@ def test_get_candidates_by_names_partial_match(temp_db):
 
     assert len(results) == 1
     assert results[0]["id"] == candidate_id
+
+
+def test_get_candidates_by_ids_empty_list_returns_empty(temp_db):
+    assert database.get_candidates_by_ids([]) == []
+
+
+def test_get_candidates_by_names_no_matches(temp_db):
+    database.add_candidate(sample_candidate())
+
+    assert database.get_candidates_by_names(["nonexistent"]) == []
+
+
+def test_get_all_candidates_includes_work_experience(temp_db):
+    candidate = sample_candidate()
+    candidate["work_experience"].append(
+        {
+            "company": "Beta Corp",
+            "role": "Lead",
+            "months_of_service": 12,
+            "skillset": "Python",
+            "tech_stack": "Python",
+            "projects": ["ETL"],
+            "is_internship": False,
+            "has_overlap": False,
+            "start_date": "2022-01",
+            "end_date": "2023-01",
+            "description": "Built pipelines",
+        }
+    )
+
+    database.add_candidate(candidate)
+
+    results = database.get_all_candidates()
+
+    assert len(results) == 1
+    work_experience = results[0]["work_experience"]
+    assert len(work_experience) == 2
+    # Ordered by start_date DESC, so the Beta Corp role should be first
+    assert work_experience[0]["company_name"] == "Beta Corp"
+    assert work_experience[0]["projects"] == ["ETL"]
