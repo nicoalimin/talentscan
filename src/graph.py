@@ -106,10 +106,7 @@ def get_all_candidates_tool() -> str:
 
 
 def extract_candidate_ids_from_history(query: str, conversation_history: str) -> List[int]:
-    """Extract candidate IDs mentioned in the query and conversation history.
-    
-    This function looks for candidate IDs in the format [ID:123] that are embedded
-    in the formatted candidate display output.
+    """Extract candidate IDs mentioned in the query and conversation history using LLM.
     
     Args:
         query: The user's current query
@@ -118,69 +115,62 @@ def extract_candidate_ids_from_history(query: str, conversation_history: str) ->
     Returns:
         List of candidate IDs that were mentioned
     """
-    # Combine query and history for analysis
-    combined_text = f"{conversation_history}\n{query}"
+    logger.debug(f"Extracting candidate IDs from history using LLM")
     
-    mentioned_ids = set()
-    
-    # Pattern 1: Extract IDs from formatted candidate lists (e.g., "### 1. Name [ID:123]")
-    # Look for the pattern [ID:number]
-    id_pattern = r'\[ID:(\d+)\]'
-    id_matches = re.findall(id_pattern, combined_text)
-    for id_str in id_matches:
-        try:
-            candidate_id = int(id_str)
-            mentioned_ids.add(candidate_id)
-        except ValueError:
-            continue
-    
-    # Pattern 2: If query mentions "top N", "first N", etc., extract IDs from recent candidate lists
-    combined_text_lower = combined_text.lower()
-    top_n_pattern = r'(?:top|first|best)\s+(\d+)'
-    top_n_match = re.search(top_n_pattern, combined_text_lower)
-    if top_n_match:
-        n = int(top_n_match.group(1))
-        # Extract IDs from formatted lists up to position N
-        # Pattern: "### N. Name [ID:123]"
-        list_pattern = r'###\s*(\d+)\.\s*[^\n]*\[ID:(\d+)\]'
-        matches = re.findall(list_pattern, combined_text)
-        for num_str, id_str in matches:
-            num = int(num_str)
-            if num <= n:
-                try:
-                    candidate_id = int(id_str)
-                    mentioned_ids.add(candidate_id)
-                except ValueError:
-                    continue
-    
-    # Pattern 3: If query mentions candidate names, try to find their IDs from recent lists
-    # This is a fallback for when names are mentioned but IDs aren't in the format
-    # We'll look for name mentions and try to find the corresponding ID from recent lists
+    # Get all candidates for mapping
     all_candidates = get_all_candidates()
-    name_to_id_map = {c.get('name', '').lower(): c.get('id') for c in all_candidates if c.get('name') and c.get('id')}
+    if not all_candidates:
+        return []
     
-    # Look for candidate name mentions in the query
-    for name, candidate_id in name_to_id_map.items():
-        # Check if name is mentioned in query (not in history, as history should have IDs)
-        name_pattern = rf'\b(?:candidate\s+)?{re.escape(name)}\b'
-        if re.search(name_pattern, query.lower()):
-            # Try to find this candidate's ID in recent history
-            # Look for pattern: "Name [ID:123]" or "### N. Name [ID:123]"
-            name_id_pattern = rf'{re.escape(name)}[^\n]*\[ID:(\d+)\]'
-            name_id_match = re.search(name_id_pattern, combined_text, re.IGNORECASE)
-            if name_id_match:
-                try:
-                    found_id = int(name_id_match.group(1))
-                    mentioned_ids.add(found_id)
-                except ValueError:
-                    # If ID not found in history, use the mapped ID as fallback
-                    if candidate_id:
-                        mentioned_ids.add(candidate_id)
-            elif candidate_id:
-                # Fallback: use the mapped ID if we can't find it in history
-                mentioned_ids.add(candidate_id)
+    # Build candidate mapping: name -> ID
+    name_to_id = {c['name'].lower(): c['id'] for c in all_candidates if c.get('name') and c.get('id')}
+    valid_ids = {c['id'] for c in all_candidates if c.get('id')}
     
-    return list(mentioned_ids)
+    # Create simple candidate list for LLM
+    candidates_list = "\n".join([
+        f"{c['name']} [ID:{c['id']}]" 
+        for c in all_candidates[:50] 
+        if c.get('name') and c.get('id')
+    ])
+    
+    combined_text = f"{conversation_history}\n\nUser Query: {query}"
+    
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        # Simple fallback: extract [ID:123] patterns
+        ids = re.findall(r'\[ID:(\d+)\]', combined_text)
+        return [int(id_str) for id_str in ids if int(id_str) in valid_ids]
+    
+    try:
+        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.1)
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "Identify which candidate IDs were mentioned in the conversation. Return ONLY a JSON array of integers like [1, 5] or []."),
+            ("human", f"""Candidates:
+{candidates_list}
+
+Conversation:
+{combined_text}
+
+Return JSON array of mentioned candidate IDs:""")
+        ])
+        
+        response = (prompt | llm).invoke({})
+        content = response.content.strip()
+        
+        # Extract JSON array
+        json_match = re.search(r'\[[\d,\s]+\]', content)
+        if json_match:
+            ids = json.loads(json_match.group(0))
+            return [int(id_val) for id_val in ids if int(id_val) in valid_ids]
+        
+        return []
+        
+    except Exception as e:
+        logger.error(f"Error extracting IDs with LLM: {e}")
+        # Fallback: extract [ID:123] patterns
+        ids = re.findall(r'\[ID:(\d+)\]', combined_text)
+        return [int(id_str) for id_str in ids if int(id_str) in valid_ids]
 
 
 @tool
