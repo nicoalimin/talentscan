@@ -23,8 +23,7 @@ def verify_graph():
     inputs["messages"] = ["screen"]
     result = app_graph.invoke(inputs)
     results = result.get("results", {})
-    print("Shortlist count:", len(results.get("shortlist", [])))
-    print("Longlist count:", len(results.get("longlist", [])))
+    print("Candidates count:", len(results.get("candidates", [])))
 
 if __name__ == "__main__":
     verify_graph()

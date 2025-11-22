@@ -49,7 +49,7 @@ def process_resumes_tool(folder_path: str = "resumes") -> str:
 
 @tool
 def get_all_candidates_tool() -> str:
-    """Get all candidates from the database. Use this when the user asks to see all candidates or a longlist.
+    """Get all candidates from the database. Use this when the user asks to see all candidates.
     
     Returns:
         A formatted string listing all candidates with their key information.
@@ -174,61 +174,49 @@ def format_candidates_with_llm(candidates: list, role: str, seniority: str, tech
     try:
         llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.2)
         
-        # Prepare candidate data for LLM
+        # Prepare minimal high-level candidate data for LLM (detailed analysis only in perform_analysis_tool)
         candidates_data = []
         for c in candidates:
-            total_months = c.get('total_months_experience', 0)
-            years = total_months // 12
-            months = total_months % 12
-            
             candidate_info = {
                 "name": c.get('name', 'Unknown'),
-                "total_months_experience": total_months,
-                "years_experience": years,
-                "months_experience": months,
-                "total_companies": c.get('total_companies', 0),
-                "roles_served": c.get('roles_served', ''),
+                "total_months_experience": c.get('total_months_experience', 0),
                 "general_proficiency": c.get('general_proficiency', ''),
                 "high_confidence_skills": c.get('high_confidence_skills', ''),
-                "low_confidence_skills": c.get('low_confidence_skills', ''),
-                "tech_stack": c.get('tech_stack', ''),
-                "skillset": c.get('skillset', ''),
                 "ai_summary": c.get('ai_summary', ''),
-                "score": c.get('score', 0),
-                "work_experience": c.get('work_experience', [])
+                "score": c.get('score', 0)
             }
             candidates_data.append(candidate_info)
         
         candidates_json = json.dumps(candidates_data, indent=2)
         
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert talent analyst. Format candidate information into a clear, structured summary.
+            ("system", """You are an expert talent analyst. Format candidate high-level information into a clear, structured summary.
 
 For each candidate, extract and summarize:
-1. **Role**: The primary role/position (from general_proficiency or roles_served, normalized to a clear job title)
+1. **Role**: The primary role/position (from general_proficiency, normalized to a clear job title)
 2. **Total Experience**: Total years and months of experience (format as "X years Y months" or "X years")
-3. **Seniority**: Assessed seniority level (Junior/Mid/Senior/Lead/Manager) based on experience and roles
-4. **Skills**: Key skills relevant to the target role and tech stack, prioritizing proven skills over listed skills
+3. **Seniority**: Assessed seniority level (Junior/Mid/Senior/Lead/Manager) based on experience
+4. **Skills**: Key skills from high_confidence_skills relevant to the target role and tech stack
 
-Be concise, accurate, and focus on information relevant to the target role, seniority, and tech stack.
+Be concise and accurate. Use only the provided high-level summary data.
 
 Return a JSON array where each candidate has:
 - formatted_role: Clear job title/role
 - formatted_experience: Human-readable experience (e.g., "5 years 3 months")
 - formatted_seniority: Assessed seniority level
 - formatted_skills: Comma-separated list of key relevant skills
-- summary: Brief 1-2 sentence summary highlighting fit for the target role
+- summary: Brief 1-2 sentence summary highlighting fit for the target role (use ai_summary if helpful)
 
-Keep the original candidate data intact, just add these formatted fields."""),
+Return ONLY the formatted fields, not the original data."""),
             ("human", """Target Role: {role}
 Target Seniority: {seniority}
 Target Tech Stack: {tech_stack}
 
-Format these candidates:
+Format these candidates (high-level summary only):
 
 {candidates_json}
 
-Return ONLY a valid JSON array with the same number of elements, each containing the original candidate data plus the formatted fields."""),
+Return ONLY a valid JSON array with the same number of elements, each containing ONLY the formatted fields (formatted_role, formatted_experience, formatted_seniority, formatted_skills, summary)."""),
         ])
         
         chain = prompt | llm
@@ -371,7 +359,7 @@ def screen_candidates_tool_with_capture(role: str, seniority: str, tech_stack: s
         tech_stack: Comma-separated list of technologies or skills (e.g., "Python, Django, AWS")
     
     Returns:
-        A formatted markdown string with the shortlist of top candidates, including their role, experience, seniority, and skills.
+        A formatted markdown string with the top candidates, including their role, experience, seniority, and skills.
     """
     logger.debug(f"🔧 TOOL CALLED: screen_candidates_tool_with_capture(role='{role}', seniority='{seniority}', tech_stack='{tech_stack}')")
     # Call the underlying function directly
@@ -381,26 +369,18 @@ def screen_candidates_tool_with_capture(role: str, seniority: str, tech_stack: s
     
     # Format candidates with LLM
     logger.debug("Formatting candidates with LLM...")
-    shortlist = result.get("shortlist", [])
-    longlist = result.get("longlist", [])
+    candidates = result.get("candidates", [])
     
-    formatted_shortlist = format_candidates_with_llm(shortlist, role, seniority, tech_stack)
-    formatted_longlist = format_candidates_with_llm(longlist, role, seniority, tech_stack)
+    formatted_candidates = format_candidates_with_llm(candidates, role, seniority, tech_stack)
     
-    result["shortlist"] = formatted_shortlist
-    result["longlist"] = formatted_longlist
+    result["candidates"] = formatted_candidates
     
     _tool_results["screen_result"] = result
-    shortlist_count = len(formatted_shortlist)
-    longlist_count = len(formatted_longlist)
-    logger.debug(f"✓ Screening completed: {shortlist_count} in shortlist, {longlist_count} in longlist")
+    candidate_count = len(formatted_candidates)
+    logger.debug(f"✓ Screening completed: {candidate_count} candidates")
     
     # Format and return the results as a readable string
-    formatted_response = format_candidates_for_display(formatted_shortlist, "Shortlist")
-    
-    # Add note about longlist if it exists
-    if longlist_count > shortlist_count:
-        formatted_response += f"\n_Found {longlist_count} total candidates. Type 'show longlist' to see all._"
+    formatted_response = format_candidates_for_display(formatted_candidates, "Top Candidates")
     
     return formatted_response
 
@@ -424,7 +404,7 @@ try:
 You have access to the following tools:
 1. process_resumes_tool - Process resumes from a directory (use when user says "process", "scan", or wants to add new resumes)
 2. screen_candidates_tool_with_capture - Screen and rank candidates (use when user wants to search/filter candidates by role, seniority, tech stack)
-3. get_all_candidates_tool - Get all candidates from database (use when user asks for "longlist", "all candidates", or "show all")
+3. get_all_candidates_tool - Get all candidates from database (use when user asks for "all candidates" or "show all")
 4. perform_analysis_tool - Perform deep analysis (use for analytical questions, comparisons, "why" questions, trend analysis)
 
 IMPORTANT GUIDELINES:

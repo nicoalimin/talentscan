@@ -72,10 +72,9 @@ class ResumeScreeningAgent:
         # Sort by score descending
         scored_candidates.sort(key=lambda x: x['score'], reverse=True)
         
-        longlist = scored_candidates[:20]
-        shortlist = scored_candidates[:5]
+        # Return top candidates (limit to top 20)
+        top_candidates = scored_candidates[:20]
         
         return {
-            "longlist": longlist,
-            "shortlist": shortlist
+            "candidates": top_candidates
         }

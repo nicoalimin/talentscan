@@ -26,8 +26,7 @@ class CandidateResponse(BaseModel):
     ai_summary: Optional[str] = None
 
 class ScreenResponse(BaseModel):
-    shortlist: List[CandidateResponse]
-    longlist: List[CandidateResponse]
+    candidates: List[CandidateResponse]
 
 @app.post("/screen", response_model=ScreenResponse)
 def screen_candidates(request: ScreenRequest):

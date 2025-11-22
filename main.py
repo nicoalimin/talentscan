@@ -41,16 +41,12 @@ def main():
     agent = ResumeScreeningAgent()
     results = agent.screen_candidates(args.role, args.seniority, args.tech_stack)
     
-    print("\n--- Shortlist (Top 5) ---")
-    for i, candidate in enumerate(results['shortlist']):
+    print("\n--- Top Candidates ---")
+    for i, candidate in enumerate(results['candidates']):
         print(f"{i+1}. {candidate.get('name')} (Score: {candidate.get('score'):.2f})")
         print(f"   Role: {candidate.get('general_proficiency')}")
         print(f"   Tech Stack: {candidate.get('tech_stack')}")
         print(f"   Summary: {candidate.get('ai_summary')}\n")
-        
-    print("\n--- Longlist (Top 20) ---")
-    for i, candidate in enumerate(results['longlist']):
-         print(f"{i+1}. {candidate.get('name')} (Score: {candidate.get('score'):.2f})")
 
 if __name__ == "__main__":
     main()
