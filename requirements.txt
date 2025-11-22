@@ -7,3 +7,4 @@ uvicorn
 chainlit
 langgraph
 pydantic
+python-dotenv

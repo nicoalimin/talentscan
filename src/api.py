@@ -1,10 +1,14 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
+from dotenv import load_dotenv
 from src.agent import ResumeScreeningAgent
 from src.processor import process_resumes
 from src.database import get_all_candidates
 import os
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="Resume Screening Agent API")
 

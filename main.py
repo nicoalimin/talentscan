@@ -1,7 +1,11 @@
 import os
 import argparse
+from dotenv import load_dotenv
 from src.processor import process_resumes
 from src.agent import ResumeScreeningAgent
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def main():
