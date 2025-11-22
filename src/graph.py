@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Dict, Optional
+from typing import Dict
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
@@ -9,15 +9,6 @@ from src.processor import process_resumes
 from src.database import get_all_candidates
 import os
 import json
-
-
-class AgentState(TypedDict):
-    messages: List[str]
-    role: str
-    seniority: str
-    tech_stack: str
-    results: Optional[Dict]
-    next_action: Optional[str]
 
 
 # Define tools for the agent
@@ -42,31 +33,48 @@ def process_resumes_tool(folder_path: str = "resumes") -> str:
 
 
 @tool
-def screen_candidates_tool(role: str, seniority: str, tech_stack: str) -> Dict:
-    """Screen and rank candidates based on role, seniority level, and tech stack requirements.
-    
-    Args:
-        role: The job role or position (e.g., "Backend Engineer", "Frontend Developer")
-        seniority: Seniority level (e.g., "Junior", "Mid", "Senior", "Lead", "Manager")
-        tech_stack: Comma-separated list of technologies or skills (e.g., "Python, Django, AWS")
-    
-    Returns:
-        A dictionary with 'shortlist' (top 5) and 'longlist' (top 20) candidates, each with scores.
-    """
-    agent = ResumeScreeningAgent()
-    results = agent.screen_candidates(role, seniority, tech_stack)
-    return results
-
-
-@tool
 def get_all_candidates_tool() -> str:
     """Get all candidates from the database. Use this when the user asks to see all candidates or a longlist.
     
     Returns:
-        A JSON string with all candidate information.
+        A formatted string listing all candidates with their key information.
     """
     candidates = get_all_candidates()
-    return json.dumps(candidates, default=str)
+    
+    if not candidates:
+        return "No candidates found in the database. Please process resumes first using the process_resumes_tool."
+    
+    # Format candidates in a readable way
+    result_lines = [f"Found {len(candidates)} candidates:\n"]
+    
+    for i, c in enumerate(candidates, 1):
+        # Calculate years/months display
+        total_months = c.get('total_months_experience', 0)
+        years = total_months // 12
+        months = total_months % 12
+        exp_display = f"{years}y {months}m" if months else f"{years} years"
+        
+        result_lines.append(f"{i}. **{c.get('name', 'Unknown')}**")
+        result_lines.append(f"   - Role: {c.get('general_proficiency', 'N/A')}")
+        result_lines.append(f"   - Experience: {exp_display} across {c.get('total_companies', 0)} companies")
+        result_lines.append(f"   - Roles: {c.get('roles_served', 'N/A')}")
+        
+        # Show skills
+        high_conf = c.get('high_confidence_skills', '')
+        low_conf = c.get('low_confidence_skills', '')
+        if high_conf:
+            result_lines.append(f"   - Proven Skills: {high_conf}")
+        if low_conf:
+            result_lines.append(f"   - Listed Skills: {low_conf}")
+        
+        # Show summary
+        summary = c.get('ai_summary', '')
+        if summary:
+            result_lines.append(f"   - Summary: {summary}")
+        
+        result_lines.append("")  # Empty line between candidates
+    
+    return "\n".join(result_lines)
 
 
 @tool
@@ -116,79 +124,12 @@ User Query:
     return response.content
 
 
-# Create the agent with tools
-def create_resume_screening_agent():
-    """Create a LangChain agent for resume screening tasks."""
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable is required")
-    
-    # Initialize the LLM
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp",
-        google_api_key=api_key,
-        temperature=0
-    )
-    
-    # Define tools
-    tools = [process_resumes_tool, screen_candidates_tool, get_all_candidates_tool, perform_analysis_tool]
-    
-    # System prompt for the agent
-    system_prompt = """You are an intelligent Resume Screening Assistant. Your job is to help users with all aspects of resume screening and candidate analysis.
-
-You have access to the following tools:
-1. process_resumes_tool - Process resumes from a directory (use when user says "process", "scan", or wants to add new resumes)
-2. screen_candidates_tool - Screen and rank candidates (use when user wants to search/filter candidates by role, seniority, tech stack)
-3. get_all_candidates_tool - Get all candidates from database (use when user asks for "longlist", "all candidates", or "show all")
-4. perform_analysis_tool - Perform deep analysis (use for analytical questions, comparisons, "why" questions, trend analysis)
-
-IMPORTANT GUIDELINES:
-- Extract role, seniority, and tech_stack from user messages. If missing, ask the user.
-- For seniority, normalize: "entry level"/"beginner"/"jr" -> "Junior", "intermediate"/"mid-level" -> "Mid", "senior"/"sr" -> "Senior", "lead"/"principal"/"staff" -> "Lead", "manager" -> "Manager"
-- When screening, always use screen_candidates_tool with all three parameters (role, seniority, tech_stack)
-- For analytical questions (why, how, compare, analyze), use perform_analysis_tool
-- Be conversational, helpful, and provide clear feedback about what you're doing
-- If the user provides partial information (e.g., just role), ask for the missing pieces before screening
-
-Always be proactive and helpful. Guide users through the process naturally."""
-    
-    # Create the agent
-    agent = create_agent(
-        model=llm,
-        tools=tools,
-        system_prompt=system_prompt
-    )
-    
-    return agent
-
-
 # Store tool results for extraction
 _tool_results = {}
 
-# Create wrapper functions that capture results
-def process_resumes_tool_wrapper(folder_path: str = "resumes") -> str:
-    """Process resumes from a directory. Scans PDF and DOCX files, extracts candidate information, and stores them in the database.
-    
-    Args:
-        folder_path: Path to the directory containing resume files. Defaults to "resumes".
-    
-    Returns:
-        A message indicating completion status.
-    """
-    # Call the underlying function directly
-    if not os.path.exists(folder_path):
-        result = f"Directory `{folder_path}` not found."
-    else:
-        try:
-            process_resumes(folder_path)
-            result = f"Processing complete! Checked `{folder_path}`."
-        except Exception as e:
-            result = f"Error processing resumes: {str(e)}"
-    
-    _tool_results["process_result"] = result
-    return result
-
-def screen_candidates_tool_wrapper(role: str, seniority: str, tech_stack: str) -> str:
+# Wrap screen_candidates_tool to capture results
+@tool
+def screen_candidates_tool_with_capture(role: str, seniority: str, tech_stack: str) -> str:
     """Screen and rank candidates based on role, seniority level, and tech stack requirements.
     
     Args:
@@ -204,51 +145,51 @@ def screen_candidates_tool_wrapper(role: str, seniority: str, tech_stack: str) -
     result = agent.screen_candidates(role, seniority, tech_stack)
     _tool_results["screen_result"] = result
     # Return a string representation for the agent, but store the dict for later extraction
-    import json
     return json.dumps({"status": "success", "shortlist_count": len(result.get("shortlist", [])), "longlist_count": len(result.get("longlist", []))})
 
-# Create wrapped tools
-process_resumes_tool_wrapped = tool(process_resumes_tool_wrapper)
-screen_candidates_tool_wrapped = tool(screen_candidates_tool_wrapper)
-
-# Create the agent instance
+# Create the agent instance with all tools
 try:
-    def create_resume_screening_agent_with_tools():
-        """Create a LangChain agent with wrapped tools."""
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY environment variable is required")
-        
-        # Initialize the LLM
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-exp",
-            google_api_key=api_key,
-            temperature=0
-        )
-        
-        # Use wrapped tools
-        tools = [process_resumes_tool_wrapped, screen_candidates_tool_wrapped]
-        
-        # System prompt for the agent
-        system_prompt = """You are a Resume Screening Assistant. Your job is to help users:
-1. Process resumes from directories (using process_resumes_tool)
-2. Screen candidates based on role, seniority, and tech stack (using screen_candidates_tool)
-
-When a user asks to process resumes, use process_resumes_tool.
-When a user asks to screen candidates, use screen_candidates_tool with the provided role, seniority, and tech_stack parameters.
-
-Always be helpful and provide clear feedback about what actions you're taking."""
-        
-        # Create the agent
-        agent = create_agent(
-            model=llm,
-            tools=tools,
-            system_prompt=system_prompt
-        )
-        
-        return agent
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY environment variable is required")
     
-    agent = create_resume_screening_agent_with_tools()
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash-exp",
+        google_api_key=api_key,
+        temperature=0
+    )
+    
+    # Use all tools, but replace screen_candidates_tool with the wrapped version that captures results
+    tools = [process_resumes_tool, screen_candidates_tool_with_capture, get_all_candidates_tool, perform_analysis_tool]
+    
+    system_prompt = """You are an intelligent Resume Screening Assistant. Your job is to help users with all aspects of resume screening and candidate analysis.
+
+You have access to the following tools:
+1. process_resumes_tool - Process resumes from a directory (use when user says "process", "scan", or wants to add new resumes)
+2. screen_candidates_tool_with_capture - Screen and rank candidates (use when user wants to search/filter candidates by role, seniority, tech stack)
+3. get_all_candidates_tool - Get all candidates from database (use when user asks for "longlist", "all candidates", or "show all")
+4. perform_analysis_tool - Perform deep analysis (use for analytical questions, comparisons, "why" questions, trend analysis)
+
+IMPORTANT GUIDELINES:
+- Extract role, seniority, and tech_stack from user messages. If missing, ask the user.
+- For seniority, normalize: "entry level"/"beginner"/"jr" -> "Junior", "intermediate"/"mid-level" -> "Mid", "senior"/"sr" -> "Senior", "lead"/"principal"/"staff" -> "Lead", "manager" -> "Manager"
+- When screening, always use screen_candidates_tool_with_capture with all three parameters (role, seniority, tech_stack)
+- For analytical questions (why, how, compare, analyze), use perform_analysis_tool
+- Be conversational, helpful, and provide clear feedback about what you're doing
+- If the user provides partial information (e.g., just role), ask for the missing pieces before screening
+
+Always be proactive and helpful. Guide users through the process naturally."""
+    
+    # Create the agent with all tools
+    agent = create_agent(
+        model=llm,
+        tools=tools,
+        system_prompt=system_prompt
+    )
+    
+    # Export the actual graph for LangGraph Studio and Chainlit
+    # The agent from create_agent is already a LangGraph graph
+    agent_graph = agent
     
     # Wrapper to maintain compatibility with existing code
     def app_graph_invoke(inputs: Dict):
@@ -362,3 +303,5 @@ except Exception as e:
             }
     
     app_graph = AppGraphWrapper()
+    # Set agent_graph to None if agent creation failed
+    agent_graph = None
