@@ -1,8 +1,14 @@
 from typing import TypedDict, List, Dict, Optional
-from langgraph.graph import StateGraph, END
+from langchain.agents import create_agent
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
 from src.agent import ResumeScreeningAgent
 from src.processor import process_resumes
+from src.database import get_all_candidates
 import os
+import json
 
 
 class AgentState(TypedDict):
@@ -13,51 +19,346 @@ class AgentState(TypedDict):
     results: Optional[Dict]
     next_action: Optional[str]
 
-def process_resumes_node(state: AgentState):
-    resumes_dir = "resumes"
-    if not os.path.exists(resumes_dir):
-        return {"messages": [f"Directory `{resumes_dir}` not found."]}
-    
-    process_resumes(resumes_dir)
-    return {"messages": [f"Processing complete! Checked `{resumes_dir}`."]}
 
-def screen_candidates_node(state: AgentState):
-    role = state.get("role", "Backend Engineer")
-    seniority = state.get("seniority", "Senior")
-    tech_stack = state.get("tech_stack", "Python, Django, AWS")
+# Define tools for the agent
+@tool
+def process_resumes_tool(folder_path: str = "resumes") -> str:
+    """Process resumes from a directory. Scans PDF and DOCX files, extracts candidate information, and stores them in the database.
     
+    Args:
+        folder_path: Path to the directory containing resume files. Defaults to "resumes".
+    
+    Returns:
+        A message indicating completion status.
+    """
+    if not os.path.exists(folder_path):
+        return f"Directory `{folder_path}` not found."
+    
+    try:
+        process_resumes(folder_path)
+        return f"Processing complete! Checked `{folder_path}`."
+    except Exception as e:
+        return f"Error processing resumes: {str(e)}"
+
+
+@tool
+def screen_candidates_tool(role: str, seniority: str, tech_stack: str) -> Dict:
+    """Screen and rank candidates based on role, seniority level, and tech stack requirements.
+    
+    Args:
+        role: The job role or position (e.g., "Backend Engineer", "Frontend Developer")
+        seniority: Seniority level (e.g., "Junior", "Mid", "Senior", "Lead", "Manager")
+        tech_stack: Comma-separated list of technologies or skills (e.g., "Python, Django, AWS")
+    
+    Returns:
+        A dictionary with 'shortlist' (top 5) and 'longlist' (top 20) candidates, each with scores.
+    """
     agent = ResumeScreeningAgent()
     results = agent.screen_candidates(role, seniority, tech_stack)
+    return results
+
+
+@tool
+def get_all_candidates_tool() -> str:
+    """Get all candidates from the database. Use this when the user asks to see all candidates or a longlist.
     
-    return {"results": results, "messages": ["Screening complete."]}
+    Returns:
+        A JSON string with all candidate information.
+    """
+    candidates = get_all_candidates()
+    return json.dumps(candidates, default=str)
 
-def router_node(state: AgentState):
-    # Simple router based on next_action set by the UI or previous steps
-    # In a real agent, an LLM would decide this based on messages.
-    # Here we rely on the input state to direct the graph.
-    action = state.get("next_action")
-    if action == "process":
-        return "process_resumes"
-    elif action == "screen":
-        return "screen_candidates"
-    return END
 
-# Define the graph
-workflow = StateGraph(AgentState)
+@tool
+def perform_analysis_tool(query: str, conversation_history: str = "") -> str:
+    """Perform deep analysis on candidates, trends, or answer complex questions about the talent pool.
+    Use this when the user asks analytical questions like:
+    - "Why is candidate X a good fit?"
+    - "Compare the top 3 candidates"
+    - "What skills are missing?"
+    - "Analyze the market trends"
+    
+    Args:
+        query: The user's analytical question or request
+        conversation_history: Recent conversation history for context (optional)
+    
+    Returns:
+        A detailed analysis response.
+    """
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        return "I cannot perform analysis without a valid API key."
+    
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.2)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a Senior Talent Intelligence Analyst.
+Your goal is to provide deep, insightful analysis based on the user's query and the conversation history.
 
-workflow.add_node("process_resumes", process_resumes_node)
-workflow.add_node("screen_candidates", screen_candidates_node)
+You have access to the context of the conversation, including previous candidate lists and screening criteria.
+Use this to answer questions like:
+- "Why is candidate X a good fit?"
+- "Compare the top 3 candidates."
+- "What are the common skills missing in this pool?"
+- "How should I adjust my criteria to get better matches?"
 
-workflow.set_conditional_entry_point(
-    router_node,
-    {
-        "process_resumes": "process_resumes",
-        "screen_candidates": "screen_candidates",
-        END: END
-    }
-)
+Be analytical, objective, and detailed. If you need more info, say so.
+"""),
+        ("human", f"""Context (History):
+{conversation_history}
 
-workflow.add_edge("process_resumes", END)
-workflow.add_edge("screen_candidates", END)
+User Query:
+{query}""")
+    ])
+    
+    chain = prompt | llm
+    response = chain.invoke({})
+    return response.content
 
-app_graph = workflow.compile()
+
+# Create the agent with tools
+def create_resume_screening_agent():
+    """Create a LangChain agent for resume screening tasks."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY environment variable is required")
+    
+    # Initialize the LLM
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash-exp",
+        google_api_key=api_key,
+        temperature=0
+    )
+    
+    # Define tools
+    tools = [process_resumes_tool, screen_candidates_tool, get_all_candidates_tool, perform_analysis_tool]
+    
+    # System prompt for the agent
+    system_prompt = """You are an intelligent Resume Screening Assistant. Your job is to help users with all aspects of resume screening and candidate analysis.
+
+You have access to the following tools:
+1. process_resumes_tool - Process resumes from a directory (use when user says "process", "scan", or wants to add new resumes)
+2. screen_candidates_tool - Screen and rank candidates (use when user wants to search/filter candidates by role, seniority, tech stack)
+3. get_all_candidates_tool - Get all candidates from database (use when user asks for "longlist", "all candidates", or "show all")
+4. perform_analysis_tool - Perform deep analysis (use for analytical questions, comparisons, "why" questions, trend analysis)
+
+IMPORTANT GUIDELINES:
+- Extract role, seniority, and tech_stack from user messages. If missing, ask the user.
+- For seniority, normalize: "entry level"/"beginner"/"jr" -> "Junior", "intermediate"/"mid-level" -> "Mid", "senior"/"sr" -> "Senior", "lead"/"principal"/"staff" -> "Lead", "manager" -> "Manager"
+- When screening, always use screen_candidates_tool with all three parameters (role, seniority, tech_stack)
+- For analytical questions (why, how, compare, analyze), use perform_analysis_tool
+- Be conversational, helpful, and provide clear feedback about what you're doing
+- If the user provides partial information (e.g., just role), ask for the missing pieces before screening
+
+Always be proactive and helpful. Guide users through the process naturally."""
+    
+    # Create the agent
+    agent = create_agent(
+        model=llm,
+        tools=tools,
+        system_prompt=system_prompt
+    )
+    
+    return agent
+
+
+# Store tool results for extraction
+_tool_results = {}
+
+# Create wrapper functions that capture results
+def process_resumes_tool_wrapper(folder_path: str = "resumes") -> str:
+    """Process resumes from a directory. Scans PDF and DOCX files, extracts candidate information, and stores them in the database.
+    
+    Args:
+        folder_path: Path to the directory containing resume files. Defaults to "resumes".
+    
+    Returns:
+        A message indicating completion status.
+    """
+    # Call the underlying function directly
+    if not os.path.exists(folder_path):
+        result = f"Directory `{folder_path}` not found."
+    else:
+        try:
+            process_resumes(folder_path)
+            result = f"Processing complete! Checked `{folder_path}`."
+        except Exception as e:
+            result = f"Error processing resumes: {str(e)}"
+    
+    _tool_results["process_result"] = result
+    return result
+
+def screen_candidates_tool_wrapper(role: str, seniority: str, tech_stack: str) -> str:
+    """Screen and rank candidates based on role, seniority level, and tech stack requirements.
+    
+    Args:
+        role: The job role or position (e.g., "Backend Engineer", "Frontend Developer")
+        seniority: Seniority level (e.g., "Junior", "Mid", "Senior", "Lead", "Manager")
+        tech_stack: Comma-separated list of technologies or skills (e.g., "Python, Django, AWS")
+    
+    Returns:
+        A JSON string representation of the results dictionary with 'shortlist' (top 5) and 'longlist' (top 20) candidates.
+    """
+    # Call the underlying function directly
+    agent = ResumeScreeningAgent()
+    result = agent.screen_candidates(role, seniority, tech_stack)
+    _tool_results["screen_result"] = result
+    # Return a string representation for the agent, but store the dict for later extraction
+    import json
+    return json.dumps({"status": "success", "shortlist_count": len(result.get("shortlist", [])), "longlist_count": len(result.get("longlist", []))})
+
+# Create wrapped tools
+process_resumes_tool_wrapped = tool(process_resumes_tool_wrapper)
+screen_candidates_tool_wrapped = tool(screen_candidates_tool_wrapper)
+
+# Create the agent instance
+try:
+    def create_resume_screening_agent_with_tools():
+        """Create a LangChain agent with wrapped tools."""
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable is required")
+        
+        # Initialize the LLM
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash-exp",
+            google_api_key=api_key,
+            temperature=0
+        )
+        
+        # Use wrapped tools
+        tools = [process_resumes_tool_wrapped, screen_candidates_tool_wrapped]
+        
+        # System prompt for the agent
+        system_prompt = """You are a Resume Screening Assistant. Your job is to help users:
+1. Process resumes from directories (using process_resumes_tool)
+2. Screen candidates based on role, seniority, and tech stack (using screen_candidates_tool)
+
+When a user asks to process resumes, use process_resumes_tool.
+When a user asks to screen candidates, use screen_candidates_tool with the provided role, seniority, and tech_stack parameters.
+
+Always be helpful and provide clear feedback about what actions you're taking."""
+        
+        # Create the agent
+        agent = create_agent(
+            model=llm,
+            tools=tools,
+            system_prompt=system_prompt
+        )
+        
+        return agent
+    
+    agent = create_resume_screening_agent_with_tools()
+    
+    # Wrapper to maintain compatibility with existing code
+    def app_graph_invoke(inputs: Dict):
+        """Invoke the agent with the given inputs, maintaining compatibility with StateGraph interface."""
+        global _tool_results
+        _tool_results = {}  # Reset tool results
+        
+        # Extract parameters from inputs
+        messages = inputs.get("messages", [])
+        role = inputs.get("role", "")
+        seniority = inputs.get("seniority", "")
+        tech_stack = inputs.get("tech_stack", "")
+        conversation_history = inputs.get("conversation_history", "")
+        next_action = inputs.get("next_action", "")
+        
+        # Build the user message - use the last message or construct from context
+        if isinstance(messages, list) and len(messages) > 0:
+            user_message = messages[-1] if isinstance(messages[-1], str) else str(messages[-1])
+        elif isinstance(messages, str):
+            user_message = messages
+        else:
+            user_message = "Help me with resume screening."
+        
+        # Add context about current session state if available
+        context_parts = []
+        if role:
+            context_parts.append(f"Current role setting: {role}")
+        if seniority:
+            context_parts.append(f"Current seniority setting: {seniority}")
+        if tech_stack:
+            context_parts.append(f"Current tech stack setting: {tech_stack}")
+        
+        if context_parts:
+            user_message = f"{user_message}\n\nContext: {'; '.join(context_parts)}"
+        
+        # Add conversation history if provided
+        if conversation_history:
+            user_message = f"Conversation history:\n{conversation_history}\n\nUser message: {user_message}"
+        
+        # Invoke the agent with proper message format
+        try:
+            # create_agent returns a graph that expects {"messages": [...]}
+            agent_messages = [HumanMessage(content=user_message)]
+            result = agent.invoke({"messages": agent_messages})
+            
+            # Extract content from result
+            if isinstance(result, dict):
+                # Check if result has messages
+                if "messages" in result:
+                    messages_list = result["messages"]
+                    if messages_list and len(messages_list) > 0:
+                        last_message = messages_list[-1]
+                        content = last_message.content if hasattr(last_message, 'content') else str(last_message)
+                    else:
+                        content = str(result)
+                else:
+                    content = result.get("content", result.get("output", str(result)))
+            elif isinstance(result, list) and len(result) > 0:
+                # Result is a list of messages, get the last one
+                last_message = result[-1]
+                content = last_message.content if hasattr(last_message, 'content') else str(last_message)
+            else:
+                content = str(result)
+            
+            # Format response to match expected StateGraph output format
+            response = {
+                "messages": [content],
+                "role": role,
+                "seniority": seniority,
+                "tech_stack": tech_stack,
+                "next_action": next_action
+            }
+            
+            # Extract screening results if available
+            if next_action == "screen" and "screen_result" in _tool_results:
+                response["results"] = _tool_results["screen_result"]
+            elif "screen_result" in _tool_results:
+                # Also include if screening was done even without explicit action
+                response["results"] = _tool_results["screen_result"]
+            
+            return response
+        except Exception as e:
+            return {
+                "messages": [f"Error invoking agent: {str(e)}"],
+                "role": role,
+                "seniority": seniority,
+                "tech_stack": tech_stack,
+                "next_action": next_action
+            }
+    
+    # Create a compatibility wrapper object
+    class AppGraphWrapper:
+        def invoke(self, inputs: Dict):
+            return app_graph_invoke(inputs)
+    
+    app_graph = AppGraphWrapper()
+    
+except Exception as e:
+    print(f"Warning: Could not create agent: {e}")
+    print("Falling back to basic implementation. Make sure GOOGLE_API_KEY is set.")
+    
+    # Fallback implementation
+    class AppGraphWrapper:
+        def invoke(self, inputs: Dict):
+            return {
+                "messages": ["Agent not available. Please set GOOGLE_API_KEY."],
+                "role": inputs.get("role", ""),
+                "seniority": inputs.get("seniority", ""),
+                "tech_stack": inputs.get("tech_stack", ""),
+                "next_action": inputs.get("next_action", "")
+            }
+    
+    app_graph = AppGraphWrapper()
