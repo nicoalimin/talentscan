@@ -5,3 +5,4 @@ resumes
 *.pyc
 *.db
 .DS_Store
+.env

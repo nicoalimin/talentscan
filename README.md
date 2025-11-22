@@ -33,9 +33,23 @@ make install
 
 ### Set Environment Variable
 
+You can set the Google API key in two ways:
+
+**Option 1: Using .env file (Recommended)**
+```bash
+# Copy the example file
+cp .env.example .env
+
+# Edit .env and add your API key
+# GOOGLE_API_KEY=your-google-api-key-here
+```
+
+**Option 2: Export as environment variable**
 ```bash
 export GOOGLE_API_KEY='your-google-api-key'
 ```
+
+Get your API key from: https://makersuite.google.com/app/apikey
 
 ## Usage
 
