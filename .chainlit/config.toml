@@ -3,10 +3,12 @@
 user_env = []
 
 # Duration (in seconds) during which the session is saved when the connection is lost
-session_timeout = 3600
+# Set to 0 to disable timeout
+session_timeout = 0
 
 # Duration (in seconds) of the user session expiry
-user_session_timeout = 1296000  # 15 days
+# Set to 0 to disable timeout
+user_session_timeout = 0
 
 # Enable third parties caching (e.g., LangChain cache)
 cache = false

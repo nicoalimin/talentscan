@@ -1,6 +1,16 @@
 import chainlit as cl
 from src.graph import agent_graph
 from langchain_core.messages import HumanMessage
+import logging
+import os
+
+# Set up logging from environment variable
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 @cl.on_chat_start
@@ -43,12 +53,16 @@ async def update_settings(settings):
 @cl.on_message
 async def main(message: cl.Message):
     """Main message handler - delegates all logic to the agent."""
+    logger.debug("=" * 60)
+    logger.debug("💬 CHAINLIT MESSAGE RECEIVED")
     content = message.content.strip()
+    logger.debug(f"User message: {content}")
     
     # Get current session state
     role = cl.user_session.get("role", "").strip()
     seniority = cl.user_session.get("seniority", "").strip()
     tech_stack = cl.user_session.get("tech_stack", "").strip()
+    logger.debug(f"Session state - Role: '{role}', Seniority: '{seniority}', Tech Stack: '{tech_stack}'")
     
     # Get/Update history
     history = cl.user_session.get("history", [])
@@ -77,13 +91,16 @@ async def main(message: cl.Message):
     # Invoke the agent graph directly - it handles all routing and decision-making
     # The graph expects {"messages": [HumanMessage(...)]}
     if agent_graph is None:
+        logger.error("Agent graph is None - GOOGLE_API_KEY not set")
         await cl.Message(content="Agent not available. Please set GOOGLE_API_KEY in .env file.").send()
         history.append("Assistant: Agent not available.")
         cl.user_session.set("history", history)
         return
     
     try:
+        logger.debug("Invoking agent_graph from Chainlit...")
         result = agent_graph.invoke({"messages": [HumanMessage(content=user_message)]})
+        logger.debug("✓ Agent graph invocation completed from Chainlit")
         
         # Extract content from result
         if isinstance(result, dict) and "messages" in result:
@@ -96,55 +113,17 @@ async def main(message: cl.Message):
         else:
             agent_response = str(result)
         
-        # Check if screening results were captured
-        from src.graph import _tool_results
-        if "screen_result" in _tool_results:
-            results = _tool_results["screen_result"]
-            shortlist = results.get('shortlist', [])
-            longlist = results.get('longlist', [])
-            
-            # Store results in session for later retrieval
-            cl.user_session.set("last_results", results)
-            
-            # Format and display results
-            response = f"## Shortlist (Top {len(shortlist)})\n\n"
-            for i, c in enumerate(shortlist):
-                # Calculate years/months display
-                total_months = c.get('total_months_experience', 0)
-                years = total_months // 12
-                months = total_months % 12
-                exp_display = f"{years}y {months}m" if months else f"{years} years"
-                
-                response += f"### {i+1}. {c.get('name')} (Score: {c.get('score', 0):.2f})\n"
-                response += f"- **Role:** {c.get('general_proficiency')}\n"
-                response += f"- **Total Experience:** {exp_display} across {c.get('total_companies', 0)} companies\n"
-                response += f"- **Roles:** {c.get('roles_served', 'N/A')}\n"
-                
-                # Show skill confidence breakdown
-                high_conf = c.get('high_confidence_skills', '')
-                low_conf = c.get('low_confidence_skills', '')
-                
-                if high_conf:
-                    response += f"- **✓ Proven Skills:** {high_conf}\n"
-                if low_conf:
-                    response += f"- **Listed Skills:** {low_conf}\n"
-                
-                response += f"- **Summary:** {c.get('ai_summary')}\n\n"
-            
-            # Only mention longlist exists
-            if len(longlist) > len(shortlist):
-                response += f"\n_Found {len(longlist)} total candidates. Type 'show longlist' to see all._"
-            
-            await cl.Message(content=response).send()
-            history.append("Assistant: [Results displayed]")
-        else:
-            # Display agent's text response
-            await cl.Message(content=agent_response).send()
-            history.append(f"Assistant: {agent_response}")
+        # Display agent's response (all formatting is handled in the graph)
+        logger.debug("📝 Displaying agent's response")
+        await cl.Message(content=agent_response).send()
+        history.append(f"Assistant: {agent_response}")
     except Exception as e:
+        logger.error(f"✗ Error in Chainlit message handler: {str(e)}")
         error_msg = f"Error: {str(e)}"
         await cl.Message(content=error_msg).send()
         history.append(f"Assistant: {error_msg}")
     
     # Save updated history
     cl.user_session.set("history", history)
+    logger.debug("✅ CHAINLIT MESSAGE HANDLING COMPLETED")
+    logger.debug("=" * 60)
