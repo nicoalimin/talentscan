@@ -9,6 +9,7 @@ help:
 	@echo "  make run             - Run CLI application"
 	@echo "  make server          - Run API server"
 	@echo "  make ui              - Run Chainlit UI"
+	@echo "  make ui-watch        - Run Chainlit UI in watch mode"
 	@echo "  make view-db         - View database contents"
 	@echo "  make verify-graph    - Verify LangGraph workflow"
 	@echo "  make create-dummies  - Create dummy resume files"
@@ -56,6 +57,11 @@ server:
 
 # Run Chainlit UI
 ui:
+	@echo "Starting Chainlit UI with hot reload..."
+	./venv/bin/chainlit run chainlit_app.py
+
+# Run Chainlit UI
+ui-watch:
 	@echo "Starting Chainlit UI with hot reload..."
 	./venv/bin/chainlit run chainlit_app.py --watch
 

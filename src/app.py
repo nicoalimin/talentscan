@@ -109,6 +109,7 @@ async def main(message: cl.Message):
     try:
         logger.debug("Invoking agent_graph from Chainlit...")
         result = agent_graph.invoke({"messages": [HumanMessage(content=user_message)]})
+        print("!!!RESULT IS", result)
         logger.debug("✓ Agent graph invocation completed from Chainlit")
         
         # Extract content from result
