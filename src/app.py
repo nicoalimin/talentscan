@@ -20,6 +20,51 @@ logger = logging.getLogger(__name__)
 logger.setLevel(getattr(logging, log_level, logging.INFO))
 
 from src.graph import agent_graph
+from langchain_core.callbacks import BaseCallbackHandler
+
+
+class ChainlitToolCallbackHandler(BaseCallbackHandler):
+    """Custom callback handler to display each tool call as a cl.Step."""
+    
+    def __init__(self):
+        self.tool_steps = {}
+    
+    async def on_tool_start(self, serialized, input_str, **kwargs):
+        """Called when a tool starts execution."""
+        run_id = kwargs.get("run_id")
+        tool_name = serialized.get("name", "Tool")
+        
+        # Create a new step for this tool call
+        step = cl.Step(name=tool_name, type="tool")
+        step.input = input_str
+        
+        # Store the step so we can update it when the tool finishes
+        self.tool_steps[run_id] = step
+        
+        # Send the step to the UI
+        await step.send()
+    
+    async def on_tool_end(self, output, **kwargs):
+        """Called when a tool finishes execution."""
+        run_id = kwargs.get("run_id")
+        step = self.tool_steps.get(run_id)
+        
+        if step:
+            step.output = str(output)
+            await step.update()
+            # Clean up
+            del self.tool_steps[run_id]
+    
+    async def on_tool_error(self, error, **kwargs):
+        """Called when a tool encounters an error."""
+        run_id = kwargs.get("run_id")
+        step = self.tool_steps.get(run_id)
+        
+        if step:
+            step.output = f"Error: {str(error)}"
+            step.is_error = True
+            await step.update()
+            del self.tool_steps[run_id]
 
 
 @cl.on_chat_start
@@ -111,8 +156,18 @@ async def main(message: cl.Message):
         # Limit to last 20 messages to avoid token limits
         messages_to_send = conversation_history[-20:] + [current_user_message]
         
-        result = agent_graph.invoke({"messages": messages_to_send, "conversation_history": conversation_history})
-        print("!!!RESULT IS", result)
+        # Note: cl.LangchainCallbackHandler is incompatible with LangChain 1.x
+        # Using custom callback handler to create cl.Step for each tool call
+        
+        # Create callback handler instance
+        callback_handler = ChainlitToolCallbackHandler()
+        
+        # Use ainvoke for async execution with our custom callback handler
+        result = await agent_graph.ainvoke(
+            {"messages": messages_to_send, "conversation_history": conversation_history},
+            config={"callbacks": [callback_handler]}
+        )
+
         logger.debug("✓ Agent graph invocation completed from Chainlit")
         
         # Extract content from result
