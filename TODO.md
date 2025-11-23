@@ -4,15 +4,25 @@ This document tracks planned improvements and known issues for the TalentScan re
 
 ## High Priority
 
-### 1. Fix `make ui-watch` in iTerm
+### 1. ~~Fix `make ui-watch` in iTerm~~ ✅
 **Issue**: The `make ui-watch` command doesn't work properly in iTerm terminal.
 
-**Details**: 
-- Command may not be running correctly in iTerm environment
-- Need to investigate terminal compatibility issues
-- Consider alternative commands or shell configurations
+**Solution**: Recreate the virtual environment to resolve the issue.
 
-**Status**: 🔴 Not Started
+**Steps to Fix**:
+```bash
+# Remove old venv
+rm -rf venv
+
+# Create new venv
+python3 -m venv venv
+
+# Activate and install dependencies
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**Status**: � Completed
 
 ---
 
