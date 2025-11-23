@@ -54,9 +54,37 @@ This document tracks planned improvements and known issues for the TalentScan re
 
 ---
 
+### 4. Upgrade Orchestrator to Reasoning Model
+**Issue**: The orchestrator agent should use a reasoning model and pipe the thinking process back to the user.
+
+**Details**:
+- Current agent uses `gemini-2.0-flash-exp` which doesn't expose reasoning steps
+- Should upgrade to a reasoning model (e.g., `gemini-2.0-flash-thinking-exp` or similar)
+- Display the model's internal reasoning/thinking process in the Chainlit UI
+- This will help users understand why the agent made certain decisions
+
+**Implementation**:
+- Update model in `src/graph.py` to use a reasoning-capable model
+- Capture and display thinking tokens/steps in the UI
+- May need to create additional `cl.Step` instances for reasoning phases
+- Consider streaming the thinking process as it happens
+
+**Benefits**:
+- Transparency in agent decision-making
+- Better debugging when agent makes unexpected choices
+- Improved user trust and understanding
+
+**Files to Modify**:
+- `src/graph.py` - Update model configuration
+- `src/app.py` - Add reasoning step display logic
+
+**Status**: 🔴 Not Started
+
+---
+
 ## Medium Priority
 
-### 4. Dockerize the Application
+### 5. Dockerize the Application
 **Issue**: Application is not containerized, making deployment and environment consistency difficult.
 
 **Details**:
@@ -75,7 +103,7 @@ This document tracks planned improvements and known issues for the TalentScan re
 
 ---
 
-### 5. Google Drive Native Integration
+### 6. Google Drive Native Integration
 **Issue**: No native integration with Google Drive for resume storage.
 
 **Details**:
@@ -99,7 +127,7 @@ This document tracks planned improvements and known issues for the TalentScan re
 
 ---
 
-### 6. Handle Out-of-Sync Resumes
+### 7. Handle Out-of-Sync Resumes
 **Issue**: No capability for resumes that are not in sync anymore (deleted, moved, or outdated).
 
 **Details**:
