@@ -1,5 +1,5 @@
 import chainlit as cl
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from dotenv import load_dotenv
 import logging
 import os
@@ -73,9 +73,8 @@ async def main(message: cl.Message):
     tech_stack = cl.user_session.get("tech_stack", "").strip()
     logger.debug(f"Session state - Role: '{role}', Seniority: '{seniority}', Tech Stack: '{tech_stack}'")
     
-    # Get/Update history
-    history = cl.user_session.get("history", [])
-    history.append(f"User: {content}")
+    # Get conversation history as message objects
+    conversation_history = cl.user_session.get("message_history", [])
     
     # Build user message with context
     user_message = content
@@ -92,30 +91,36 @@ async def main(message: cl.Message):
     if context_parts:
         user_message = f"{user_message}\n\nContext: {'; '.join(context_parts)}"
     
-    # Add conversation history if available
-    if len(history) > 1:
-        conversation_history = "\n".join(history[-10:])
-        user_message = f"Conversation history:\n{conversation_history}\n\nUser message: {user_message}"
+    # Create current user message
+    current_user_message = HumanMessage(content=user_message)
     
     # Invoke the agent graph directly - it handles all routing and decision-making
-    # The graph expects {"messages": [HumanMessage(...)]}
+    # The graph expects {"messages": [HumanMessage(...), AIMessage(...), ...]}
     if agent_graph is None:
         logger.error("Agent graph is None - GOOGLE_API_KEY not set")
         await cl.Message(content="Agent not available. Please set GOOGLE_API_KEY in .env file.").send()
-        history.append("Assistant: Agent not available.")
-        cl.user_session.set("history", history)
+        # Store error message in history
+        conversation_history.append(current_user_message)
+        conversation_history.append(AIMessage(content="Agent not available. Please set GOOGLE_API_KEY in .env file."))
+        cl.user_session.set("message_history", conversation_history)
         return
     
     try:
         logger.debug("Invoking agent_graph from Chainlit...")
-        result = agent_graph.invoke({"messages": [HumanMessage(content=user_message)]})
+        # Combine conversation history with current message
+        # Limit to last 20 messages to avoid token limits
+        messages_to_send = conversation_history[-20:] + [current_user_message]
+        
+        result = agent_graph.invoke({"messages": messages_to_send, "conversation_history": conversation_history})
         print("!!!RESULT IS", result)
         logger.debug("✓ Agent graph invocation completed from Chainlit")
         
         # Extract content from result
+        agent_response = ""
         if isinstance(result, dict) and "messages" in result:
             messages_list = result["messages"]
             if messages_list and len(messages_list) > 0:
+                # Get the last message which should be the AI response
                 last_message = messages_list[-1]
                 agent_response = last_message.content if hasattr(last_message, 'content') else str(last_message)
             else:
@@ -126,14 +131,20 @@ async def main(message: cl.Message):
         # Display agent's response (all formatting is handled in the graph)
         logger.debug("📝 Displaying agent's response")
         await cl.Message(content=agent_response).send()
-        history.append(f"Assistant: {agent_response}")
+        
+        # Store messages in conversation history
+        conversation_history.append(current_user_message)
+        conversation_history.append(AIMessage(content=agent_response))
+        
     except Exception as e:
         logger.error(f"✗ Error in Chainlit message handler: {str(e)}")
         error_msg = f"Error: {str(e)}"
         await cl.Message(content=error_msg).send()
-        history.append(f"Assistant: {error_msg}")
+        # Store error message in history
+        conversation_history.append(current_user_message)
+        conversation_history.append(AIMessage(content=error_msg))
     
-    # Save updated history
-    cl.user_session.set("history", history)
+    # Save updated message history
+    cl.user_session.set("message_history", conversation_history)
     logger.debug("✅ CHAINLIT MESSAGE HANDLING COMPLETED")
     logger.debug("=" * 60)
