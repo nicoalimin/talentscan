@@ -523,7 +523,7 @@ try:
     # Use all tools, but replace screen_candidates_tool with the wrapped version that captures results
     tools = [process_resumes_tool, screen_candidates_tool_with_capture, get_all_candidates_tool, perform_analysis_tool]
     
-    system_prompt = """You are an intelligent Resume Screening Assistant. Your job is to help users with all aspects of resume screening and candidate analysis.
+    system_prompt = """You are an AI assistant that can both use tools and respond directly to the user. You are an intelligent Resume Screening Assistant helping users with all aspects of resume screening and candidate analysis.
 
 You have access to the following tools:
 1. process_resumes_tool - Process resumes from a directory (use when user says "process", "scan", or wants to add new resumes)
@@ -531,15 +531,50 @@ You have access to the following tools:
 3. get_all_candidates_tool - Get all candidates from database (use when user asks for "all candidates" or "show all")
 4. perform_analysis_tool - Perform deep analysis (use for analytical questions, comparisons, "why" questions, trend analysis)
 
-IMPORTANT GUIDELINES:
+## Decision Rules
+
+1. Decide whether to call a tool based solely on the user's intent.
+
+2. Call a tool **only if**:
+   - The user asks for data you cannot know without external computation or lookup (e.g., screening candidates, processing resumes, retrieving database records).
+   - The user requests an operation explicitly requiring a tool (search, calculation, DB query, API call).
+   - The answer would be unreliable without tool execution.
+
+3. Do **not** call a tool if:
+   - The user asks for an explanation, summary, opinion, or guidance that does not require external data.
+   - You can answer fully using your internal reasoning.
+   - The cost of the tool outweighs the user's need.
+
+4. When you decide to call a tool:
+   - Respond ONLY with the tool invocation payload in the correct format.
+   - Provide minimal parameters needed for accurate execution.
+   - Do not add commentary.
+
+## Handling Tool Results
+
+When the tool returns a result:
+1. NEVER return the raw tool JSON directly to the user.
+2. ALWAYS translate it into a human-friendly summary.
+3. If the tool returned structured data:
+   - Interpret it.
+   - Extract key insights.
+   - Provide a concise, helpful explanation.
+
+## Domain-Specific Guidelines
+
 - Extract role, seniority, and tech_stack from user messages. If missing, ask the user.
 - For seniority, normalize: "entry level"/"beginner"/"jr" -> "Junior", "intermediate"/"mid-level" -> "Mid", "senior"/"sr" -> "Senior", "lead"/"principal"/"staff" -> "Lead", "manager" -> "Manager"
 - When screening, always use screen_candidates_tool_with_capture with all three parameters (role, seniority, tech_stack)
 - For analytical questions (why, how, compare, analyze), use perform_analysis_tool
-- Be conversational, helpful, and provide clear feedback about what you're doing
 - If the user provides partial information (e.g., just role), ask for the missing pieces before screening
 
-Always be proactive and helpful. Guide users through the process naturally."""
+## Overriding Principles
+
+- Prioritize accuracy over speed.
+- Minimize unnecessary tool calls.
+- When unsure, ask a clarifying question instead of calling a tool.
+- Follow the expected tool invocation schema exactly.
+- Always present tool results as a clear, human-friendly summary to the user."""
     
     # Create the agent with all tools
     agent = create_agent(
@@ -566,40 +601,70 @@ Always be proactive and helpful. Guide users through the process naturally."""
         role = inputs.get("role", "")
         seniority = inputs.get("seniority", "")
         tech_stack = inputs.get("tech_stack", "")
-        conversation_history = inputs.get("conversation_history", "")
         next_action = inputs.get("next_action", "")
         
         logger.debug(f"Context - Role: '{role}', Seniority: '{seniority}', Tech Stack: '{tech_stack}'")
         
-        # Build the user message - use the last message or construct from context
-        if isinstance(messages, list) and len(messages) > 0:
-            user_message = messages[-1] if isinstance(messages[-1], str) else str(messages[-1])
-        elif isinstance(messages, str):
-            user_message = messages
+        # Import BaseMessage for type checking
+        from langchain_core.messages import BaseMessage
+        
+        agent_messages = []
+        
+        # Check if messages are already message objects (from app.py)
+        # app.py sends [history..., current_message] as "messages"
+        if isinstance(messages, list) and len(messages) > 0 and isinstance(messages[0], BaseMessage):
+            # Preserve the message structure directly
+            agent_messages = list(messages) # Create a copy to modify if needed
+            
+            # Add context to the last message if it's a HumanMessage and we have context
+            context_parts = []
+            if role:
+                context_parts.append(f"Current role setting: {role}")
+            if seniority:
+                context_parts.append(f"Current seniority setting: {seniority}")
+            if tech_stack:
+                context_parts.append(f"Current tech stack setting: {tech_stack}")
+            
+            if context_parts and isinstance(agent_messages[-1], HumanMessage):
+                last_msg = agent_messages[-1]
+                original_content = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
+                agent_messages[-1] = HumanMessage(
+                    content=f"{original_content}\n\nContext: {'; '.join(context_parts)}"
+                )
         else:
-            user_message = "Help me with resume screening."
-        
-        # Add context about current session state if available
-        context_parts = []
-        if role:
-            context_parts.append(f"Current role setting: {role}")
-        if seniority:
-            context_parts.append(f"Current seniority setting: {seniority}")
-        if tech_stack:
-            context_parts.append(f"Current tech stack setting: {tech_stack}")
-        
-        if context_parts:
-            user_message = f"{user_message}\n\nContext: {'; '.join(context_parts)}"
-        
-        # Add conversation history if provided
-        if conversation_history:
-            user_message = f"Conversation history:\n{conversation_history}\n\nUser message: {user_message}"
+            # Legacy handling for string inputs
+            if isinstance(messages, list) and len(messages) > 0:
+                user_message = messages[-1] if isinstance(messages[-1], str) else str(messages[-1])
+            elif isinstance(messages, str):
+                user_message = messages
+            else:
+                user_message = "Help me with resume screening."
+            
+            # Add context about current session state if available
+            context_parts = []
+            if role:
+                context_parts.append(f"Current role setting: {role}")
+            if seniority:
+                context_parts.append(f"Current seniority setting: {seniority}")
+            if tech_stack:
+                context_parts.append(f"Current tech stack setting: {tech_stack}")
+            
+            if context_parts:
+                user_message = f"{user_message}\n\nContext: {'; '.join(context_parts)}"
+            
+            # Note: We don't append conversation_history string here anymore to avoid jamming it in
+            
+            agent_messages = [HumanMessage(content=user_message)]
         
         # Invoke the agent with proper message format
         try:
-            logger.debug(f"📨 User message: {user_message[:100]}..." if len(user_message) > 100 else f"📨 User message: {user_message}")
+            # Append conversation_history from inputs to agent_messages
+            conversation_history = inputs.get("conversation_history", [])
+            if conversation_history and isinstance(conversation_history, list):
+                agent_messages.extend(conversation_history)
+
+            logger.debug(f"📨 Sending {len(agent_messages)} message(s) to agent")
             # create_agent returns a graph that expects {"messages": [...]}
-            agent_messages = [HumanMessage(content=user_message)]
             logger.debug("Invoking agent graph...")
             result = agent.invoke({"messages": agent_messages})
             logger.debug("✓ Agent graph invocation completed")
