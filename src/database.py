@@ -1,7 +1,7 @@
 import sqlite3
 import json
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 
 DB_FILE = "candidates.db"
 
@@ -17,11 +17,11 @@ def add_candidate(candidate_data: Dict):
     try:
         cursor.execute('''
             INSERT INTO candidates (
-                filename, name, age, 
+                filename, name, age,
                 total_months_experience, total_companies, roles_served,
                 skillset, high_confidence_skills, low_confidence_skills, tech_stack,
-                general_proficiency, ai_summary
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                general_proficiency, ai_summary, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             candidate_data.get('filename'),
             candidate_data.get('name'),
@@ -34,7 +34,8 @@ def add_candidate(candidate_data: Dict):
             candidate_data.get('low_confidence_skills', ''),
             candidate_data.get('tech_stack'),
             candidate_data.get('general_proficiency'),
-            candidate_data.get('ai_summary')
+            candidate_data.get('ai_summary'),
+            1 if candidate_data.get('is_active', True) else 0
         ))
         
         candidate_id = cursor.lastrowid
@@ -181,13 +182,20 @@ def get_candidates_by_names(names: List[str]) -> List[Dict]:
     conn.close()
     return candidates
 
-def get_all_candidates() -> List[Dict]:
-    """Get all candidates with their work experiences."""
+def get_all_candidates(only_active: bool = False) -> List[Dict]:
+    """Get all candidates with their work experiences.
+
+    Args:
+        only_active: When True, filters out candidates flagged as inactive.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     # Get all candidates
-    cursor.execute('SELECT * FROM candidates')
+    query = 'SELECT * FROM candidates'
+    if only_active:
+        query += ' WHERE is_active = 1'
+    cursor.execute(query)
     candidates = [dict(row) for row in cursor.fetchall()]
     
     # Get work experiences for each candidate
@@ -213,6 +221,32 @@ def get_all_candidates() -> List[Dict]:
     
     conn.close()
     return candidates
+
+
+def set_candidates_active_status(active_filenames: Set[str]):
+    """Flag candidates as active or inactive based on available resume filenames."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        if active_filenames:
+            placeholders = ','.join(['?'] * len(active_filenames))
+            filenames = list(active_filenames)
+
+            cursor.execute(
+                f"UPDATE candidates SET is_active = 1 WHERE filename IN ({placeholders})",
+                filenames,
+            )
+            cursor.execute(
+                f"UPDATE candidates SET is_active = 0 WHERE filename NOT IN ({placeholders})",
+                filenames,
+            )
+        else:
+            cursor.execute("UPDATE candidates SET is_active = 0")
+
+        conn.commit()
+    finally:
+        conn.close()
 
 # Initialize the database when this module is imported (or called explicitly)
 if __name__ == "__main__":

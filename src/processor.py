@@ -7,7 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
-from src.database import add_candidate, get_candidate_by_filename
+from src.database import add_candidate, get_candidate_by_filename, set_candidates_active_status
 
 
 # Define Pydantic model for structured output
@@ -116,31 +116,35 @@ def process_resumes(folder_path: str):
     if not os.path.exists(folder_path):
         print(f"Folder {folder_path} not found.")
         return
-    
+
     files = os.listdir(folder_path)
-    for filename in files:
-        if filename.endswith('.pdf') or filename.endswith('.docx'):
-            # Check if already processed
-            existing = get_candidate_by_filename(filename)
-            if existing:
-                print(f"Skipping {filename}, already processed.")
-                continue
-            
-            filepath = os.path.join(folder_path, filename)
-            print(f"Processing {filename}...")
-            
-            # Extract text
-            if filename.endswith('.pdf'):
-                text = extract_text_from_pdf(filepath)
-            else:
-                text = extract_text_from_docx(filepath)
-            
-            # Extract structured data
-            data = extract_structured_data(text)
-            
-            if data:
-                data['filename'] = filename
-                add_candidate(data)
-                print(f"Added {data.get('name', 'Unknown')} to database.")
-            else:
-                print(f"Failed to extract structured data for {filename}")
+    resume_files = [f for f in files if f.endswith('.pdf') or f.endswith('.docx')]
+
+    for filename in resume_files:
+        # Check if already processed
+        existing = get_candidate_by_filename(filename)
+        if existing:
+            print(f"Skipping {filename}, already processed.")
+            continue
+
+        filepath = os.path.join(folder_path, filename)
+        print(f"Processing {filename}...")
+
+        # Extract text
+        if filename.endswith('.pdf'):
+            text = extract_text_from_pdf(filepath)
+        else:
+            text = extract_text_from_docx(filepath)
+
+        # Extract structured data
+        data = extract_structured_data(text)
+
+        if data:
+            data['filename'] = filename
+            add_candidate(data)
+            print(f"Added {data.get('name', 'Unknown')} to database.")
+        else:
+            print(f"Failed to extract structured data for {filename}")
+
+    # Flag any candidates whose resumes are no longer present as inactive
+    set_candidates_active_status(set(resume_files))
