@@ -9,3 +9,5 @@ langgraph
 pydantic
 python-dotenv
 pytest
+google-api-python-client
+google-auth
