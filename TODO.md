@@ -43,24 +43,19 @@ pip install -r requirements.txt
 
 ---
 
-### 3. Rename "Capture" in Screen Tool
+### 3. ~~Rename "Capture" in Screen Tool~~ ✅
 **Issue**: Screen feature is incorrectly named - what does "Capture" even mean?
 
 **Details**:
-- `screen_candidates_tool_with_capture` is confusing
-- The "capture" refers to capturing results for later use, but this is not clear to users
-- Should be renamed to something more intuitive
+- `screen_candidates_tool_with_capture` was confusing
+- The "capture" referred to capturing results for later use, but this was not clear to users
+- Renamed to `screen_candidates_tool` for better clarity
 
-**Suggested Names**:
-- `screen_candidates_tool`
-- `search_candidates_tool`
-- `filter_candidates_tool`
-
-**Files to Update**:
-- `src/graph.py` (tool definition and references)
+**Files Updated**:
+- `src/graph.py` (tool definition and all references)
 - System prompts that mention the tool
 
-**Status**: 🔴 Not Started
+**Status**: � Completed
 
 ---
 

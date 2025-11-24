@@ -472,9 +472,9 @@ def format_candidates_for_display(candidates: list, title: str = "Candidates") -
     return response
 
 
-# Wrap screen_candidates_tool to capture results
+# Screen candidates tool
 @tool
-def screen_candidates_tool_with_capture(role: str, seniority: str, tech_stack: str) -> str:
+def screen_candidates_tool(role: str, seniority: str, tech_stack: str) -> str:
     """Screen and rank candidates based on role, seniority level, and tech stack requirements.
     
     Args:
@@ -485,7 +485,7 @@ def screen_candidates_tool_with_capture(role: str, seniority: str, tech_stack: s
     Returns:
         A formatted markdown string with the top candidates, including their role, experience, seniority, and skills.
     """
-    logger.debug(f"🔧 TOOL CALLED: screen_candidates_tool_with_capture(role='{role}', seniority='{seniority}', tech_stack='{tech_stack}')")
+    logger.debug(f"🔧 TOOL CALLED: screen_candidates_tool(role='{role}', seniority='{seniority}', tech_stack='{tech_stack}')")
     # Call the underlying function directly
     logger.debug("Screening candidates...")
     agent = ResumeScreeningAgent()
@@ -520,14 +520,14 @@ try:
         temperature=0
     )
     
-    # Use all tools, but replace screen_candidates_tool with the wrapped version that captures results
-    tools = [process_resumes_tool, screen_candidates_tool_with_capture, get_all_candidates_tool, perform_analysis_tool]
+    # Define all available tools
+    tools = [process_resumes_tool, screen_candidates_tool, get_all_candidates_tool, perform_analysis_tool]
     
     system_prompt = """You are an AI assistant that can both use tools and respond directly to the user. You are an intelligent Resume Screening Assistant helping users with all aspects of resume screening and candidate analysis.
 
 You have access to the following tools:
 1. process_resumes_tool - Process resumes from a directory (use when user says "process", "scan", or wants to add new resumes)
-2. screen_candidates_tool_with_capture - Screen and rank candidates (use when user wants to search/filter candidates by role, seniority, tech stack)
+2. screen_candidates_tool - Screen and rank candidates (use when user wants to search/filter candidates by role, seniority, tech stack)
 3. get_all_candidates_tool - Get all candidates from database (use when user asks for "all candidates" or "show all")
 4. perform_analysis_tool - Perform deep analysis (use for analytical questions, comparisons, "why" questions, trend analysis)
 
@@ -564,7 +564,7 @@ When the tool returns a result:
 
 - Extract role, seniority, and tech_stack from user messages. If missing, ask the user.
 - For seniority, normalize: "entry level"/"beginner"/"jr" -> "Junior", "intermediate"/"mid-level" -> "Mid", "senior"/"sr" -> "Senior", "lead"/"principal"/"staff" -> "Lead", "manager" -> "Manager"
-- When screening, always use screen_candidates_tool_with_capture with all three parameters (role, seniority, tech_stack)
+- When screening, always use screen_candidates_tool with all three parameters (role, seniority, tech_stack)
 - For analytical questions (why, how, compare, analyze), use perform_analysis_tool
 - If the user provides partial information (e.g., just role), ask for the missing pieces before screening
 
