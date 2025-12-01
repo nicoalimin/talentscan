@@ -568,6 +568,17 @@ When the tool returns a result:
 - For analytical questions (why, how, compare, analyze), use perform_analysis_tool
 - If the user provides partial information (e.g., just role), ask for the missing pieces before screening
 
+## Important: "More Candidates" Requests
+
+When the user asks for "more candidates", "additional candidates", "other options", "show me more", or similar:
+1. CHECK the conversation history first—if a previous screening already returned a list of candidates (screen_candidates_tool returns up to 20), there may be more candidates in that list you haven't shown yet
+2. If there ARE remaining candidates from the previous screening that weren't discussed, present those additional candidates from the existing results
+3. ONLY call screen_candidates_tool again if:
+   - No previous screening was done, OR
+   - The user wants to change the search criteria (different role/seniority/tech_stack), OR
+   - All candidates from the previous screening have already been shown/discussed
+4. After showing candidates, if the user wants deeper analysis, use perform_analysis_tool
+
 ## Overriding Principles
 
 - Prioritize accuracy over speed.
