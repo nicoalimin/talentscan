@@ -63,7 +63,7 @@ class ResumeScreeningAgent:
         return score
 
     def screen_candidates(self, role: str, seniority: str, tech_stack: str) -> Dict[str, List[Dict]]:
-        candidates = get_all_candidates()
+        candidates = get_all_candidates(only_active=True)
         scored_candidates = []
         
         for candidate in candidates:
