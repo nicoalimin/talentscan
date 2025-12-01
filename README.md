@@ -19,6 +19,7 @@ An AI-powered resume screening agent built with LangChain, LangGraph, and Google
 
 - Python 3.12+
 - Google API Key (for Gemini)
+- Google Drive service account credentials (for optional Drive sync)
 
 ### Installation
 
@@ -47,6 +48,18 @@ cp .env.example .env
 **Option 2: Export as environment variable**
 ```bash
 export GOOGLE_API_KEY='your-google-api-key'
+```
+
+### Google Drive Credentials (optional)
+
+To automatically fetch resumes from a Google Drive folder, provide a service account credential using one of these options:
+
+```bash
+# As a JSON string
+export GOOGLE_DRIVE_CREDENTIALS='{"type": "service_account", ... }'
+
+# Or path to the JSON file
+export GOOGLE_DRIVE_CREDENTIALS_PATH=/path/to/credentials.json
 ```
 
 Get your API key from: https://makersuite.google.com/app/apikey
@@ -82,6 +95,16 @@ make clean
 
 ```bash
 python main.py \
+  --role "Backend Engineer" \
+  --seniority "Senior" \
+  --tech_stack "Python, Django, AWS"
+```
+
+To fetch resumes from a Google Drive folder before processing, pass the folder ID:
+
+```bash
+python main.py \
+  --drive_folder_id "your-drive-folder-id" \
   --role "Backend Engineer" \
   --seniority "Senior" \
   --tech_stack "Python, Django, AWS"
