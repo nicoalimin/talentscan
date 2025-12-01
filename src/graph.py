@@ -486,6 +486,13 @@ def screen_candidates_tool(role: str, seniority: str, tech_stack: str) -> str:
         A formatted markdown string with the top candidates, including their role, experience, seniority, and skills.
     """
     logger.debug(f"🔧 TOOL CALLED: screen_candidates_tool(role='{role}', seniority='{seniority}', tech_stack='{tech_stack}')")
+    
+    # Check if database has any candidates
+    all_candidates = get_all_candidates()
+    if not all_candidates:
+        logger.warning("No candidates found in database")
+        return "No candidates found in the database. Please use the process_resumes_tool to process resumes from the 'resumes' directory first, then try screening again."
+    
     # Call the underlying function directly
     logger.debug("Screening candidates...")
     agent = ResumeScreeningAgent()
@@ -549,6 +556,11 @@ You have access to the following tools:
    - Respond ONLY with the tool invocation payload in the correct format.
    - Provide minimal parameters needed for accurate execution.
    - Do not add commentary.
+
+5. **Empty Database Handling**:
+   - If screen_candidates_tool returns a message saying "No candidates found in the database", automatically call process_resumes_tool with the default folder path "resumes".
+   - After processing resumes, retry the screening operation with the same parameters.
+   - This ensures a seamless user experience when the database is empty.
 
 ## Handling Tool Results
 
