@@ -2,49 +2,36 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
-from src.agent import ResumeScreeningAgent
 from src.processor import process_resumes
 from src.database import get_all_candidates
 import os
 
-# Load environment variables from .env file
 load_dotenv()
 
 app = FastAPI(title="Resume Screening Agent API")
 
-class ScreenRequest(BaseModel):
-    role: str
-    seniority: str
-    tech_stack: str
 
 class CandidateResponse(BaseModel):
     filename: Optional[str] = None
     name: Optional[str] = None
-    score: Optional[float] = None
     general_proficiency: Optional[str] = None
     tech_stack: Optional[str] = None
     ai_summary: Optional[str] = None
 
-class ScreenResponse(BaseModel):
-    candidates: List[CandidateResponse]
-
-@app.post("/screen", response_model=ScreenResponse)
-def screen_candidates(request: ScreenRequest):
-    agent = ResumeScreeningAgent()
-    results = agent.screen_candidates(request.role, request.seniority, request.tech_stack)
-    return results
 
 @app.post("/process")
 def trigger_processing(background_tasks: BackgroundTasks, directory: str = "resumes"):
     if not os.path.exists(directory):
         raise HTTPException(status_code=404, detail=f"Directory {directory} not found")
-    
+
     background_tasks.add_task(process_resumes, directory)
     return {"message": f"Processing started for directory: {directory}"}
 
-@app.get("/candidates")
+
+@app.get("/candidates", response_model=List[CandidateResponse])
 def list_candidates():
     return get_all_candidates()
+
 
 @app.get("/")
 def read_root():

@@ -2,28 +2,25 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.graph import app_graph
+from langchain_core.messages import HumanMessage
+from src.graph import agent_graph
 
 
 def verify_graph():
-    
+    if agent_graph is None:
+        print("ERROR: agent_graph is None — check ANTHROPIC_API_KEY")
+        return
+
     print("Testing 'process' action...")
-    inputs = {
-        "role": "Backend Engineer",
-        "seniority": "Senior",
-        "tech_stack": "Python",
-        "next_action": "process",
-        "messages": ["process"]
-    }
-    result = app_graph.invoke(inputs)
-    print("Result:", result.get("messages"))
-    
-    print("\nTesting 'screen' action...")
-    inputs["next_action"] = "screen"
-    inputs["messages"] = ["screen"]
-    result = app_graph.invoke(inputs)
-    results = result.get("results", {})
-    print("Candidates count:", len(results.get("candidates", [])))
+    result = agent_graph.invoke({"messages": [HumanMessage(content="process resumes")]})
+    last = result["messages"][-1]
+    print("Result:", last.content if hasattr(last, "content") else last)
+
+    print("\nTesting 'query all candidates'...")
+    result = agent_graph.invoke({"messages": [HumanMessage(content="show me all candidates")]})
+    last = result["messages"][-1]
+    print("Result:", last.content if hasattr(last, "content") else last)
+
 
 if __name__ == "__main__":
     verify_graph()

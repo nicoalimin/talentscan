@@ -1,521 +1,114 @@
-from typing import Dict, List
-from langchain.agents import create_agent
-from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage
-from langchain_anthropic import ChatAnthropic
-from langchain_core.prompts import ChatPromptTemplate
-from src.agent import ResumeScreeningAgent
-from src.processor import process_resumes
-from src.database import get_all_candidates, get_candidates_by_names, get_candidates_by_ids
-from dotenv import load_dotenv
 import os
 import json
 import logging
-import re
 
-# Load environment variables from .env file
+from langchain_anthropic import ChatAnthropic
+from langchain_core.tools import tool
+from langchain.agents import create_agent
+from dotenv import load_dotenv
+
+from src.processor import process_resumes
+from src.database import get_all_candidates, get_candidates_by_ids, get_candidates_by_names
+
 load_dotenv()
 
-# Set up logging from environment variable
-# Use force=True to ensure it takes effect even if logging was already configured
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, log_level, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    force=True
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True,
 )
 logger = logging.getLogger(__name__)
-# Explicitly set logger level to ensure DEBUG messages are shown
 logger.setLevel(getattr(logging, log_level, logging.INFO))
 
 
-# Define tools for the agent
 @tool
 def process_resumes_tool(folder_path: str = "resumes") -> str:
-    """Process resumes from a directory. Scans PDF and DOCX files, extracts candidate information, and stores them in the database.
-    
+    """Process resumes from a directory. Scans PDF and DOCX files, extracts candidate information using AI, and stores them in the database.
+
     Args:
         folder_path: Path to the directory containing resume files. Defaults to "resumes".
-    
+
     Returns:
-        A message indicating completion status.
+        A message indicating how many resumes were processed.
     """
-    logger.debug(f"🔧 TOOL CALLED: process_resumes_tool(folder_path='{folder_path}')")
+    logger.debug(f"process_resumes_tool(folder_path='{folder_path}')")
     if not os.path.exists(folder_path):
-        logger.warning(f"Directory '{folder_path}' not found")
         return f"Directory `{folder_path}` not found."
-    
     try:
-        logger.debug(f"Processing resumes from '{folder_path}'...")
         process_resumes(folder_path)
-        logger.debug(f"✓ Successfully processed resumes from '{folder_path}'")
-        return f"Processing complete! Checked `{folder_path}`."
+        return f"Processing complete. Checked `{folder_path}` for new resumes."
     except Exception as e:
-        logger.error(f"✗ Error processing resumes: {str(e)}")
-        return f"Error processing resumes: {str(e)}"
+        logger.error(f"Error processing resumes: {e}")
+        return f"Error processing resumes: {e}"
 
 
 @tool
-def get_all_candidates_tool() -> str:
-    """Get all candidates from the database. Use this when the user asks to see all candidates.
-    
+def query_candidates_tool(
+    candidate_ids: list[int] | None = None,
+    names: list[str] | None = None,
+) -> str:
+    """Query the candidate database. Returns candidate profiles as JSON.
+
+    - If candidate_ids is provided, fetch those specific candidates (with full work history).
+    - If names is provided, search by name (partial, case-insensitive, with full work history).
+    - If neither is provided, return all candidates (with full work history).
+
+    Args:
+        candidate_ids: Optional list of candidate database IDs to fetch.
+        names: Optional list of name strings to search for.
+
     Returns:
-        A formatted string listing all candidates with their key information.
+        JSON string of candidate records.
     """
-    logger.debug("🔧 TOOL CALLED: get_all_candidates_tool()")
-    candidates = get_all_candidates()
-    
+    logger.debug(f"query_candidates_tool(candidate_ids={candidate_ids}, names={names})")
+    if candidate_ids:
+        candidates = get_candidates_by_ids(candidate_ids)
+    elif names:
+        candidates = get_candidates_by_names(names)
+    else:
+        candidates = get_all_candidates()
+
     if not candidates:
-        logger.warning("No candidates found in database")
-        return "No candidates found in the database. Please process resumes first using the process_resumes_tool."
-    
-    logger.debug(f"✓ Retrieved {len(candidates)} candidates from database")
-    
-    # Format candidates in a readable way
-    result_lines = [f"Found {len(candidates)} candidates:\n"]
-    
-    for i, c in enumerate(candidates, 1):
-        # Calculate years/months display
-        total_months = c.get('total_months_experience', 0)
-        years = total_months // 12
-        months = total_months % 12
-        exp_display = f"{years}y {months}m" if months else f"{years} years"
-        
-        candidate_id = c.get('id', '')
-        result_lines.append(f"{i}. **{c.get('name', 'Unknown')}** [ID:{candidate_id}]")
-        result_lines.append(f"   - Role: {c.get('general_proficiency', 'N/A')}")
-        result_lines.append(f"   - Experience: {exp_display} across {c.get('total_companies', 0)} companies")
-        result_lines.append(f"   - Roles: {c.get('roles_served', 'N/A')}")
-        
-        # Show skills
-        high_conf = c.get('high_confidence_skills', '')
-        low_conf = c.get('low_confidence_skills', '')
-        if high_conf:
-            result_lines.append(f"   - Proven Skills: {high_conf}")
-        if low_conf:
-            result_lines.append(f"   - Listed Skills: {low_conf}")
-        
-        # Show summary
-        summary = c.get('ai_summary', '')
-        if summary:
-            result_lines.append(f"   - Summary: {summary}")
-        
-        result_lines.append("")  # Empty line between candidates
-    
-    return "\n".join(result_lines)
+        return json.dumps({"candidates": [], "message": "No candidates found in the database."})
+
+    return json.dumps({"candidates": candidates, "count": len(candidates)}, default=str)
 
 
-def extract_candidate_ids_from_history(query: str, conversation_history: str) -> List[int]:
-    """Extract candidate IDs mentioned in the query and conversation history using LLM.
-    
-    Args:
-        query: The user's current query
-        conversation_history: Recent conversation history
-    
-    Returns:
-        List of candidate IDs that were mentioned
-    """
-    logger.debug(f"Extracting candidate IDs from history using LLM")
-    
-    # Get all candidates for mapping
-    all_candidates = get_all_candidates()
-    if not all_candidates:
-        return []
-    
-    # Build candidate mapping: name -> ID
-    name_to_id = {c['name'].lower(): c['id'] for c in all_candidates if c.get('name') and c.get('id')}
-    valid_ids = {c['id'] for c in all_candidates if c.get('id')}
-    
-    # Create simple candidate list for LLM
-    candidates_list = "\n".join([
-        f"{c['name']} [ID:{c['id']}]" 
-        for c in all_candidates[:50] 
-        if c.get('name') and c.get('id')
-    ])
-    
-    combined_text = f"{conversation_history}\n\nUser Query: {query}"
-    
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        # Simple fallback: extract [ID:123] patterns
-        ids = re.findall(r'\[ID:(\d+)\]', combined_text)
-        return [int(id_str) for id_str in ids if int(id_str) in valid_ids]
-    
-    try:
-        llm = ChatAnthropic(model="claude-sonnet-4-6", anthropic_api_key=api_key, temperature=0.1)
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "Identify which candidate IDs were mentioned in the conversation. Return ONLY a JSON array of integers like [1, 5] or []."),
-            ("human", f"""Candidates:
-{candidates_list}
+SYSTEM_PROMPT = """You are an intelligent Resume Screening Assistant. You help users process resumes, search for candidates, and analyse talent pools.
 
-Conversation:
-{combined_text}
+You have two tools:
 
-Return JSON array of mentioned candidate IDs:""")
-        ])
-        
-        response = (prompt | llm).invoke({})
-        content = response.content.strip()
-        
-        # Extract JSON array
-        json_match = re.search(r'\[[\d,\s]+\]', content)
-        if json_match:
-            ids = json.loads(json_match.group(0))
-            return [int(id_val) for id_val in ids if int(id_val) in valid_ids]
-        
-        return []
-        
-    except Exception as e:
-        logger.error(f"Error extracting IDs with LLM: {e}")
-        # Fallback: extract [ID:123] patterns
-        ids = re.findall(r'\[ID:(\d+)\]', combined_text)
-        return [int(id_str) for id_str in ids if int(id_str) in valid_ids]
+1. **process_resumes_tool** — Scans a directory for PDF/DOCX resume files, extracts candidate information using AI, and stores them in the database. Use this when the user wants to process, scan, or import new resumes. Default directory is "resumes".
+
+2. **query_candidates_tool** — Retrieves candidate data from the database as JSON. You can query all candidates, fetch specific IDs, or search by name.
+
+## How to handle requests
+
+**Processing resumes:** Call process_resumes_tool. If the user doesn't specify a directory, use the default.
+
+**Screening / searching candidates:** Call query_candidates_tool to get candidate data, then analyse and rank them yourself based on the user's criteria (role, seniority, tech stack). When ranking:
+- Match tech stack skills against each candidate's high_confidence_skills (strong signal) and low_confidence_skills (weaker signal)
+- Consider total_months_experience and general_proficiency for seniority fit
+- Consider roles_served for role fit
+- Present results as a ranked list with clear reasoning
+
+**Analysis / comparison:** Call query_candidates_tool to get the relevant data, then provide your own analytical insights.
+
+**Empty database:** If the query returns no candidates, suggest the user process resumes first or offer to do it automatically.
+
+## Response formatting
+
+- Use markdown for readability
+- When listing candidates include: name, role/proficiency, experience (convert months to years + months), key skills, and a brief assessment
+- When comparing candidates use structured sections
+- Be concise but thorough
+- If the user's request is missing key criteria (role, seniority, or tech stack), ask for the missing information before screening
+"""
 
 
-@tool
-def perform_analysis_tool(query: str, conversation_history: str = "") -> str:
-    """Perform deep analysis on candidates, trends, or answer complex questions about the talent pool.
-    Use this when the user asks analytical questions like:
-    - "Why is candidate X a good fit?"
-    - "Compare the top 3 candidates"
-    - "What skills are missing?"
-    - "Analyze the market trends"
-    
-    Args:
-        query: The user's analytical question or request
-        conversation_history: Recent conversation history for context (optional)
-    
-    Returns:
-        A detailed analysis response.
-    """
-    logger.debug(f"🔧 TOOL CALLED: perform_analysis_tool(query='{query[:50]}...', conversation_history={'provided' if conversation_history else 'none'})")
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.error("Cannot perform analysis: ANTHROPIC_API_KEY not set")
-        return "I cannot perform analysis without a valid API key."
-    
-    # Extract candidate IDs mentioned in history and query
-    logger.debug("Extracting candidate IDs from conversation history...")
-    mentioned_ids = extract_candidate_ids_from_history(query, conversation_history)
-    
-    # Fetch full details for mentioned candidates using their IDs
-    candidate_details = []
-    if mentioned_ids:
-        logger.debug(f"Found mentions of candidate IDs: {mentioned_ids}")
-        candidate_details = get_candidates_by_ids(mentioned_ids)
-        logger.debug(f"Fetched full details for {len(candidate_details)} candidates")
-    
-    logger.debug("Performing deep analysis with LLM...")
-    
-    llm = ChatAnthropic(model="claude-sonnet-4-6", anthropic_api_key=api_key, temperature=0.2)
-    
-    # Format candidate details for inclusion in prompt
-    candidate_details_text = ""
-    if candidate_details:
-        candidate_details_text = "\n\n## Full Candidate Details:\n\n"
-        for candidate in candidate_details:
-            candidate_details_text += f"### {candidate.get('name', 'Unknown')}\n"
-            candidate_details_text += f"- Age: {candidate.get('age', 'N/A')}\n"
-            candidate_details_text += f"- Total Experience: {candidate.get('total_months_experience', 0)} months ({candidate.get('total_months_experience', 0) // 12} years {(candidate.get('total_months_experience', 0) % 12)} months)\n"
-            candidate_details_text += f"- Total Companies: {candidate.get('total_companies', 0)}\n"
-            candidate_details_text += f"- Roles Served: {candidate.get('roles_served', 'N/A')}\n"
-            candidate_details_text += f"- General Proficiency: {candidate.get('general_proficiency', 'N/A')}\n"
-            candidate_details_text += f"- Skillset: {candidate.get('skillset', 'N/A')}\n"
-            candidate_details_text += f"- High Confidence Skills: {candidate.get('high_confidence_skills', 'N/A')}\n"
-            candidate_details_text += f"- Low Confidence Skills: {candidate.get('low_confidence_skills', 'N/A')}\n"
-            candidate_details_text += f"- Tech Stack: {candidate.get('tech_stack', 'N/A')}\n"
-            candidate_details_text += f"- AI Summary: {candidate.get('ai_summary', 'N/A')}\n"
-            
-            # Include work experience details
-            work_experiences = candidate.get('work_experience', [])
-            if work_experiences:
-                candidate_details_text += f"\n#### Work Experience ({len(work_experiences)} positions):\n"
-                for i, exp in enumerate(work_experiences, 1):
-                    candidate_details_text += f"\n{i}. **{exp.get('role', 'N/A')}** at {exp.get('company_name', 'N/A')}\n"
-                    candidate_details_text += f"   - Duration: {exp.get('months_of_service', 0)} months ({exp.get('start_date', 'N/A')} to {exp.get('end_date', 'N/A')})\n"
-                    candidate_details_text += f"   - Skillset: {exp.get('skillset', 'N/A')}\n"
-                    candidate_details_text += f"   - Tech Stack: {exp.get('tech_stack', 'N/A')}\n"
-                    if exp.get('description'):
-                        candidate_details_text += f"   - Description: {exp.get('description', 'N/A')}\n"
-                    if exp.get('projects'):
-                        projects = exp.get('projects', [])
-                        if isinstance(projects, list) and projects:
-                            candidate_details_text += f"   - Projects: {', '.join(projects) if isinstance(projects[0], str) else str(projects)}\n"
-            candidate_details_text += "\n"
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a Senior Talent Intelligence Analyst.
-Your goal is to provide deep, insightful analysis based on the user's query and the conversation history.
+tools = [process_resumes_tool, query_candidates_tool]
 
-You have access to the context of the conversation, including previous candidate lists and screening criteria.
-Use this to answer questions like:
-- "Why is candidate X a good fit?"
-- "Compare the top 3 candidates."
-- "What are the common skills missing in this pool?"
-- "How should I adjust my criteria to get better matches?"
-
-Be analytical, objective, and detailed. If you need more info, say so.
-"""),
-        ("human", f"""Context (History):
-{conversation_history}
-{candidate_details_text}
-User Query:
-{query}""")
-    ])
-    
-    chain = prompt | llm
-    response = chain.invoke({})
-    logger.debug("✓ Analysis completed")
-    return response.content
-
-
-# Store tool results for extraction
-_tool_results = {}
-
-def format_candidates_with_llm(candidates: list, role: str, seniority: str, tech_stack: str) -> list:
-    """Use LLM to format candidates and extract role, total experience, seniority, and skills.
-    
-    Args:
-        candidates: List of candidate dictionaries from screening
-        role: Target role for context
-        seniority: Target seniority for context
-        tech_stack: Target tech stack for context
-    
-    Returns:
-        List of formatted candidate dictionaries with LLM-generated summaries
-    """
-    if not candidates:
-        return []
-    
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.warning("Cannot format candidates with LLM: ANTHROPIC_API_KEY not set")
-        return candidates
-    
-    try:
-        llm = ChatAnthropic(model="claude-sonnet-4-6", anthropic_api_key=api_key, temperature=0.2)
-        
-        # Prepare minimal high-level candidate data for LLM (detailed analysis only in perform_analysis_tool)
-        candidates_data = []
-        for c in candidates:
-            candidate_info = {
-                "name": c.get('name', 'Unknown'),
-                "total_months_experience": c.get('total_months_experience', 0),
-                "general_proficiency": c.get('general_proficiency', ''),
-                "high_confidence_skills": c.get('high_confidence_skills', ''),
-                "ai_summary": c.get('ai_summary', ''),
-                "score": c.get('score', 0)
-            }
-            candidates_data.append(candidate_info)
-        
-        candidates_json = json.dumps(candidates_data, indent=2)
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert talent analyst. Format candidate high-level information into a clear, structured summary.
-
-For each candidate, extract and summarize:
-1. **Role**: The primary role/position (from general_proficiency, normalized to a clear job title)
-2. **Total Experience**: Total years and months of experience (format as "X years Y months" or "X years")
-3. **Seniority**: Assessed seniority level (Junior/Mid/Senior/Lead/Manager) based on experience
-4. **Skills**: Key skills from high_confidence_skills relevant to the target role and tech stack
-
-Be concise and accurate. Use only the provided high-level summary data.
-
-Return a JSON array where each candidate has:
-- formatted_role: Clear job title/role
-- formatted_experience: Human-readable experience (e.g., "5 years 3 months")
-- formatted_seniority: Assessed seniority level
-- formatted_skills: Comma-separated list of key relevant skills
-- summary: Brief 1-2 sentence summary highlighting fit for the target role (use ai_summary if helpful)
-
-Return ONLY the formatted fields, not the original data."""),
-            ("human", """Target Role: {role}
-Target Seniority: {seniority}
-Target Tech Stack: {tech_stack}
-
-Format these candidates (high-level summary only):
-
-{candidates_json}
-
-Return ONLY a valid JSON array with the same number of elements, each containing ONLY the formatted fields (formatted_role, formatted_experience, formatted_seniority, formatted_skills, summary)."""),
-        ])
-        
-        chain = prompt | llm
-        response = chain.invoke({
-            "role": role,
-            "seniority": seniority,
-            "tech_stack": tech_stack,
-            "candidates_json": candidates_json
-        })
-        
-        # Parse LLM response
-        content = response.content.strip()
-        
-        # Extract JSON from response (handle markdown code blocks)
-        json_str = None
-        
-        # Try to find JSON in markdown code blocks first
-        json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', content, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try to find JSON array by looking for balanced brackets
-            # Find the first [ and then find the matching ]
-            start_idx = content.find('[')
-            if start_idx != -1:
-                bracket_count = 0
-                for i in range(start_idx, len(content)):
-                    if content[i] == '[':
-                        bracket_count += 1
-                    elif content[i] == ']':
-                        bracket_count -= 1
-                        if bracket_count == 0:
-                            json_str = content[start_idx:i+1]
-                            break
-            else:
-                json_str = content
-        
-        if not json_str:
-            logger.warning("Could not extract JSON from LLM response")
-            return candidates
-        
-        try:
-            formatted_candidates = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from LLM response: {e}")
-            logger.debug(f"JSON string: {json_str[:500]}...")
-            return candidates
-        
-        # Validate that we got the right number of candidates
-        if len(formatted_candidates) != len(candidates):
-            logger.warning(f"Mismatch in candidate count: expected {len(candidates)}, got {len(formatted_candidates)}")
-            # Only merge what we have
-            max_len = min(len(formatted_candidates), len(candidates))
-        else:
-            max_len = len(candidates)
-        
-        # Merge formatted fields back into original candidates
-        for i in range(max_len):
-            formatted_candidate = formatted_candidates[i]
-            candidates[i].update({
-                "formatted_role": formatted_candidate.get("formatted_role", candidates[i].get('general_proficiency', '')),
-                "formatted_experience": formatted_candidate.get("formatted_experience", ""),
-                "formatted_seniority": formatted_candidate.get("formatted_seniority", candidates[i].get('general_proficiency', '')),
-                "formatted_skills": formatted_candidate.get("formatted_skills", ""),
-                "formatted_summary": formatted_candidate.get("summary", candidates[i].get('ai_summary', ''))
-            })
-        
-        logger.debug(f"✓ Formatted {max_len} candidates with LLM")
-        return candidates
-        
-    except Exception as e:
-        logger.error(f"Error formatting candidates with LLM: {str(e)}")
-        logger.debug(f"LLM response: {response.content if 'response' in locals() else 'N/A'}")
-        return candidates  # Return original candidates if formatting fails
-
-
-def format_candidates_for_display(candidates: list, title: str = "Candidates") -> str:
-    """Format candidates into a readable markdown string for display.
-    
-    Args:
-        candidates: List of candidate dictionaries (should already be LLM-formatted)
-        title: Title for the section
-    
-    Returns:
-        Formatted markdown string
-    """
-    if not candidates:
-        return f"## {title}\n\nNo candidates found."
-    
-    response = f"## {title} (Top {len(candidates)})\n\n"
-    for i, c in enumerate(candidates):
-        # Use LLM-formatted fields if available, fallback to original fields
-        formatted_role = c.get('formatted_role') or c.get('general_proficiency', 'N/A')
-        formatted_experience = c.get('formatted_experience') or ""
-        formatted_seniority = c.get('formatted_seniority') or c.get('general_proficiency', 'N/A')
-        formatted_skills = c.get('formatted_skills') or ""
-        formatted_summary = c.get('formatted_summary') or c.get('ai_summary', '')
-        
-        # Fallback: calculate experience if not formatted
-        if not formatted_experience:
-            total_months = c.get('total_months_experience', 0)
-            years = total_months // 12
-            months = total_months % 12
-            formatted_experience = f"{years}y {months}m" if months else f"{years} years"
-        
-        # Fallback: use skills if not formatted
-        if not formatted_skills:
-            high_conf = c.get('high_confidence_skills', '')
-            low_conf = c.get('low_confidence_skills', '')
-            skill_parts = []
-            if high_conf:
-                skill_parts.append(f"✓ {high_conf}")
-            if low_conf:
-                skill_parts.append(low_conf)
-            formatted_skills = "; ".join(skill_parts) if skill_parts else "N/A"
-        
-        # Include candidate ID as a hidden marker for extraction
-        candidate_id = c.get('id', '')
-        response += f"### {i+1}. {c.get('name')} (Score: {c.get('score', 0):.2f}) [ID:{candidate_id}]\n"
-        response += f"- **Role:** {formatted_role}\n"
-        response += f"- **Total Experience:** {formatted_experience}"
-        if c.get('total_companies', 0) > 0:
-            response += f" across {c.get('total_companies', 0)} companies"
-        response += "\n"
-        response += f"- **Seniority:** {formatted_seniority}\n"
-        response += f"- **Skills:** {formatted_skills}\n"
-        if formatted_summary:
-            response += f"- **Summary:** {formatted_summary}\n"
-        response += "\n"
-    
-    return response
-
-
-# Screen candidates tool
-@tool
-def screen_candidates_tool(role: str, seniority: str, tech_stack: str) -> str:
-    """Screen and rank candidates based on role, seniority level, and tech stack requirements.
-    
-    Args:
-        role: The job role or position (e.g., "Backend Engineer", "Frontend Developer")
-        seniority: Seniority level (e.g., "Junior", "Mid", "Senior", "Lead", "Manager")
-        tech_stack: Comma-separated list of technologies or skills (e.g., "Python, Django, AWS")
-    
-    Returns:
-        A formatted markdown string with the top candidates, including their role, experience, seniority, and skills.
-    """
-    logger.debug(f"🔧 TOOL CALLED: screen_candidates_tool(role='{role}', seniority='{seniority}', tech_stack='{tech_stack}')")
-    
-    # Check if database has any candidates
-    all_candidates = get_all_candidates()
-    if not all_candidates:
-        logger.warning("No candidates found in database")
-        return "No candidates found in the database. Please use the process_resumes_tool to process resumes from the 'resumes' directory first, then try screening again."
-    
-    # Call the underlying function directly
-    logger.debug("Screening candidates...")
-    agent = ResumeScreeningAgent()
-    result = agent.screen_candidates(role, seniority, tech_stack)
-    
-    # Format candidates with LLM
-    logger.debug("Formatting candidates with LLM...")
-    candidates = result.get("candidates", [])
-    
-    formatted_candidates = format_candidates_with_llm(candidates, role, seniority, tech_stack)
-    
-    result["candidates"] = formatted_candidates
-    
-    _tool_results["screen_result"] = result
-    candidate_count = len(formatted_candidates)
-    logger.debug(f"✓ Screening completed: {candidate_count} candidates")
-    
-    # Format and return the results as a readable string
-    formatted_response = format_candidates_for_display(formatted_candidates, "Top Candidates")
-    
-    return formatted_response
-
-# Create the agent instance with all tools
 try:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -524,247 +117,12 @@ try:
     llm = ChatAnthropic(
         model="claude-sonnet-4-6",
         anthropic_api_key=api_key,
-        temperature=0
+        temperature=0,
     )
-    
-    # Define all available tools
-    tools = [process_resumes_tool, screen_candidates_tool, get_all_candidates_tool, perform_analysis_tool]
-    
-    system_prompt = """You are an AI assistant that can both use tools and respond directly to the user. You are an intelligent Resume Screening Assistant helping users with all aspects of resume screening and candidate analysis.
 
-You have access to the following tools:
-1. process_resumes_tool - Process resumes from a directory (use when user says "process", "scan", or wants to add new resumes)
-2. screen_candidates_tool - Screen and rank candidates (use when user wants to search/filter candidates by role, seniority, tech stack)
-3. get_all_candidates_tool - Get all candidates from database (use when user asks for "all candidates" or "show all")
-4. perform_analysis_tool - Perform deep analysis (use for analytical questions, comparisons, "why" questions, trend analysis)
+    agent_graph = create_agent(llm, tools, system_prompt=SYSTEM_PROMPT)
 
-## Decision Rules
-
-1. Decide whether to call a tool based solely on the user's intent.
-
-2. Call a tool **only if**:
-   - The user asks for data you cannot know without external computation or lookup (e.g., screening candidates, processing resumes, retrieving database records).
-   - The user requests an operation explicitly requiring a tool (search, calculation, DB query, API call).
-   - The answer would be unreliable without tool execution.
-
-3. Do **not** call a tool if:
-   - The user asks for an explanation, summary, opinion, or guidance that does not require external data.
-   - You can answer fully using your internal reasoning.
-   - The cost of the tool outweighs the user's need.
-
-4. When you decide to call a tool:
-   - Respond ONLY with the tool invocation payload in the correct format.
-   - Provide minimal parameters needed for accurate execution.
-   - Do not add commentary.
-
-5. **Empty Database Handling**:
-   - If screen_candidates_tool returns a message saying "No candidates found in the database", automatically call process_resumes_tool with the default folder path "resumes".
-   - After processing resumes, retry the screening operation with the same parameters.
-   - This ensures a seamless user experience when the database is empty.
-
-## Handling Tool Results
-
-When the tool returns a result:
-1. NEVER return the raw tool JSON directly to the user.
-2. ALWAYS translate it into a human-friendly summary.
-3. If the tool returned structured data:
-   - Interpret it.
-   - Extract key insights.
-   - Provide a concise, helpful explanation.
-
-## Domain-Specific Guidelines
-
-- Extract role, seniority, and tech_stack from user messages. If missing, ask the user.
-- For seniority, normalize: "entry level"/"beginner"/"jr" -> "Junior", "intermediate"/"mid-level" -> "Mid", "senior"/"sr" -> "Senior", "lead"/"principal"/"staff" -> "Lead", "manager" -> "Manager"
-- When screening, always use screen_candidates_tool with all three parameters (role, seniority, tech_stack)
-- For analytical questions (why, how, compare, analyze), use perform_analysis_tool
-- If the user provides partial information (e.g., just role), ask for the missing pieces before screening
-
-## Important: "More Candidates" Requests
-
-When the user asks for "more candidates", "additional candidates", "other options", "show me more", or similar:
-1. CHECK the conversation history first—if a previous screening already returned a list of candidates (screen_candidates_tool returns up to 20), there may be more candidates in that list you haven't shown yet
-2. If there ARE remaining candidates from the previous screening that weren't discussed, present those additional candidates from the existing results
-3. ONLY call screen_candidates_tool again if:
-   - No previous screening was done, OR
-   - The user wants to change the search criteria (different role/seniority/tech_stack), OR
-   - All candidates from the previous screening have already been shown/discussed
-4. After showing candidates, if the user wants deeper analysis, use perform_analysis_tool
-
-## Overriding Principles
-
-- Prioritize accuracy over speed.
-- Minimize unnecessary tool calls.
-- When unsure, ask a clarifying question instead of calling a tool.
-- Follow the expected tool invocation schema exactly.
-- Always present tool results as a clear, human-friendly summary to the user."""
-    
-    # Create the agent with all tools
-    agent = create_agent(
-        model=llm,
-        tools=tools,
-        system_prompt=system_prompt
-    )
-    
-    # Export the actual graph for LangGraph Studio and Chainlit
-    # The agent from create_agent is already a LangGraph graph
-    agent_graph = agent
-    
-    # Wrapper to maintain compatibility with existing code
-    def app_graph_invoke(inputs: Dict):
-        """Invoke the agent with the given inputs, maintaining compatibility with StateGraph interface."""
-        global _tool_results
-        logger.debug("=" * 60)
-        logger.debug("🚀 AGENT INVOCATION STARTED")
-        logger.debug(f"Input keys: {list(inputs.keys())}")
-        _tool_results = {}  # Reset tool results
-        
-        # Extract parameters from inputs
-        messages = inputs.get("messages", [])
-        role = inputs.get("role", "")
-        seniority = inputs.get("seniority", "")
-        tech_stack = inputs.get("tech_stack", "")
-        next_action = inputs.get("next_action", "")
-        
-        logger.debug(f"Context - Role: '{role}', Seniority: '{seniority}', Tech Stack: '{tech_stack}'")
-        
-        # Import BaseMessage for type checking
-        from langchain_core.messages import BaseMessage
-        
-        agent_messages = []
-        
-        # Check if messages are already message objects (from app.py)
-        # app.py sends [history..., current_message] as "messages"
-        if isinstance(messages, list) and len(messages) > 0 and isinstance(messages[0], BaseMessage):
-            # Preserve the message structure directly
-            agent_messages = list(messages) # Create a copy to modify if needed
-            
-            # Add context to the last message if it's a HumanMessage and we have context
-            context_parts = []
-            if role:
-                context_parts.append(f"Current role setting: {role}")
-            if seniority:
-                context_parts.append(f"Current seniority setting: {seniority}")
-            if tech_stack:
-                context_parts.append(f"Current tech stack setting: {tech_stack}")
-            
-            if context_parts and isinstance(agent_messages[-1], HumanMessage):
-                last_msg = agent_messages[-1]
-                original_content = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
-                agent_messages[-1] = HumanMessage(
-                    content=f"{original_content}\n\nContext: {'; '.join(context_parts)}"
-                )
-        else:
-            # Legacy handling for string inputs
-            if isinstance(messages, list) and len(messages) > 0:
-                user_message = messages[-1] if isinstance(messages[-1], str) else str(messages[-1])
-            elif isinstance(messages, str):
-                user_message = messages
-            else:
-                user_message = "Help me with resume screening."
-            
-            # Add context about current session state if available
-            context_parts = []
-            if role:
-                context_parts.append(f"Current role setting: {role}")
-            if seniority:
-                context_parts.append(f"Current seniority setting: {seniority}")
-            if tech_stack:
-                context_parts.append(f"Current tech stack setting: {tech_stack}")
-            
-            if context_parts:
-                user_message = f"{user_message}\n\nContext: {'; '.join(context_parts)}"
-            
-            # Note: We don't append conversation_history string here anymore to avoid jamming it in
-            
-            agent_messages = [HumanMessage(content=user_message)]
-        
-        # Invoke the agent with proper message format
-        try:
-            # Append conversation_history from inputs to agent_messages
-            conversation_history = inputs.get("conversation_history", [])
-            if conversation_history and isinstance(conversation_history, list):
-                agent_messages.extend(conversation_history)
-
-            logger.debug(f"📨 Sending {len(agent_messages)} message(s) to agent")
-            # create_agent returns a graph that expects {"messages": [...]}
-            logger.debug("Invoking agent graph...")
-            result = agent.invoke({"messages": agent_messages})
-            logger.debug("✓ Agent graph invocation completed")
-            
-            # Extract content from result
-            if isinstance(result, dict):
-                # Check if result has messages
-                if "messages" in result:
-                    messages_list = result["messages"]
-                    if messages_list and len(messages_list) > 0:
-                        last_message = messages_list[-1]
-                        content = last_message.content if hasattr(last_message, 'content') else str(last_message)
-                    else:
-                        content = str(result)
-                else:
-                    content = result.get("content", result.get("output", str(result)))
-            elif isinstance(result, list) and len(result) > 0:
-                # Result is a list of messages, get the last one
-                last_message = result[-1]
-                content = last_message.content if hasattr(last_message, 'content') else str(last_message)
-            else:
-                content = str(result)
-            
-            # Format response to match expected StateGraph output format
-            response = {
-                "messages": [content],
-                "role": role,
-                "seniority": seniority,
-                "tech_stack": tech_stack,
-                "next_action": next_action
-            }
-            
-            # Extract screening results if available
-            if next_action == "screen" and "screen_result" in _tool_results:
-                response["results"] = _tool_results["screen_result"]
-                logger.debug("✓ Screening results included in response")
-            elif "screen_result" in _tool_results:
-                # Also include if screening was done even without explicit action
-                response["results"] = _tool_results["screen_result"]
-                logger.debug("✓ Screening results included in response")
-            
-            logger.debug("✅ AGENT INVOCATION COMPLETED SUCCESSFULLY")
-            logger.debug("=" * 60)
-            return response
-        except Exception as e:
-            logger.error(f"✗ AGENT INVOCATION FAILED: {str(e)}")
-            logger.debug("=" * 60)
-            return {
-                "messages": [f"Error invoking agent: {str(e)}"],
-                "role": role,
-                "seniority": seniority,
-                "tech_stack": tech_stack,
-                "next_action": next_action
-            }
-    
-    # Create a compatibility wrapper object
-    class AppGraphWrapper:
-        def invoke(self, inputs: Dict):
-            return app_graph_invoke(inputs)
-    
-    app_graph = AppGraphWrapper()
-    
 except Exception as e:
     print(f"Warning: Could not create agent: {e}")
     print("Falling back to basic implementation. Make sure ANTHROPIC_API_KEY is set.")
-    
-    # Fallback implementation
-    class AppGraphWrapper:
-        def invoke(self, inputs: Dict):
-            return {
-                "messages": ["Agent not available. Please set ANTHROPIC_API_KEY."],
-                "role": inputs.get("role", ""),
-                "seniority": inputs.get("seniority", ""),
-                "tech_stack": inputs.get("tech_stack", ""),
-                "next_action": inputs.get("next_action", "")
-            }
-    
-    app_graph = AppGraphWrapper()
-    # Set agent_graph to None if agent creation failed
     agent_graph = None
