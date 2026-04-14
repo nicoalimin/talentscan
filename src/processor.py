@@ -3,7 +3,7 @@ import json
 from typing import List, Dict, Optional
 import pypdf
 import docx
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
@@ -66,12 +66,12 @@ def extract_text_from_docx(filepath: str) -> str:
 
 def extract_structured_data(text: str) -> Optional[Dict]:
     try:
-        api_key = os.environ.get("GOOGLE_API_KEY")
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            print("GOOGLE_API_KEY not found in environment variables.")
+            print("ANTHROPIC_API_KEY not found in environment variables.")
             return None
-        
-        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0)
+
+        llm = ChatAnthropic(model="claude-sonnet-4-6", anthropic_api_key=api_key, temperature=0)
         parser = PydanticOutputParser(pydantic_object=CandidateProfile)
         
         prompt = PromptTemplate(

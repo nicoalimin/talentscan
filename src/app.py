@@ -142,11 +142,11 @@ async def main(message: cl.Message):
     # Invoke the agent graph directly - it handles all routing and decision-making
     # The graph expects {"messages": [HumanMessage(...), AIMessage(...), ...]}
     if agent_graph is None:
-        logger.error("Agent graph is None - GOOGLE_API_KEY not set")
-        await cl.Message(content="Agent not available. Please set GOOGLE_API_KEY in .env file.").send()
+        logger.error("Agent graph is None - ANTHROPIC_API_KEY not set")
+        await cl.Message(content="Agent not available. Please set ANTHROPIC_API_KEY in .env file.").send()
         # Store error message in history
         conversation_history.append(current_user_message)
-        conversation_history.append(AIMessage(content="Agent not available. Please set GOOGLE_API_KEY in .env file."))
+        conversation_history.append(AIMessage(content="Agent not available. Please set ANTHROPIC_API_KEY in .env file."))
         cl.user_session.set("message_history", conversation_history)
         return
     

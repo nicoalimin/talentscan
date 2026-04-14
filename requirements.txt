@@ -1,5 +1,5 @@
 langchain
-langchain-google-genai
+langchain-anthropic
 pypdf
 python-docx
 fastapi

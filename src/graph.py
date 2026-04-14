@@ -2,7 +2,7 @@ from typing import Dict, List
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from src.agent import ResumeScreeningAgent
 from src.processor import process_resumes
@@ -135,14 +135,14 @@ def extract_candidate_ids_from_history(query: str, conversation_history: str) ->
     
     combined_text = f"{conversation_history}\n\nUser Query: {query}"
     
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         # Simple fallback: extract [ID:123] patterns
         ids = re.findall(r'\[ID:(\d+)\]', combined_text)
         return [int(id_str) for id_str in ids if int(id_str) in valid_ids]
     
     try:
-        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.1)
+        llm = ChatAnthropic(model="claude-sonnet-4-6", anthropic_api_key=api_key, temperature=0.1)
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", "Identify which candidate IDs were mentioned in the conversation. Return ONLY a JSON array of integers like [1, 5] or []."),
@@ -190,9 +190,9 @@ def perform_analysis_tool(query: str, conversation_history: str = "") -> str:
         A detailed analysis response.
     """
     logger.debug(f"🔧 TOOL CALLED: perform_analysis_tool(query='{query[:50]}...', conversation_history={'provided' if conversation_history else 'none'})")
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        logger.error("Cannot perform analysis: GOOGLE_API_KEY not set")
+        logger.error("Cannot perform analysis: ANTHROPIC_API_KEY not set")
         return "I cannot perform analysis without a valid API key."
     
     # Extract candidate IDs mentioned in history and query
@@ -208,7 +208,7 @@ def perform_analysis_tool(query: str, conversation_history: str = "") -> str:
     
     logger.debug("Performing deep analysis with LLM...")
     
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.2)
+    llm = ChatAnthropic(model="claude-sonnet-4-6", anthropic_api_key=api_key, temperature=0.2)
     
     # Format candidate details for inclusion in prompt
     candidate_details_text = ""
@@ -288,13 +288,13 @@ def format_candidates_with_llm(candidates: list, role: str, seniority: str, tech
     if not candidates:
         return []
     
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        logger.warning("Cannot format candidates with LLM: GOOGLE_API_KEY not set")
+        logger.warning("Cannot format candidates with LLM: ANTHROPIC_API_KEY not set")
         return candidates
     
     try:
-        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp", google_api_key=api_key, temperature=0.2)
+        llm = ChatAnthropic(model="claude-sonnet-4-6", anthropic_api_key=api_key, temperature=0.2)
         
         # Prepare minimal high-level candidate data for LLM (detailed analysis only in perform_analysis_tool)
         candidates_data = []
@@ -517,13 +517,13 @@ def screen_candidates_tool(role: str, seniority: str, tech_stack: str) -> str:
 
 # Create the agent instance with all tools
 try:
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable is required")
-    
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp",
-        google_api_key=api_key,
+        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+
+    llm = ChatAnthropic(
+        model="claude-sonnet-4-6",
+        anthropic_api_key=api_key,
         temperature=0
     )
     
@@ -752,13 +752,13 @@ When the user asks for "more candidates", "additional candidates", "other option
     
 except Exception as e:
     print(f"Warning: Could not create agent: {e}")
-    print("Falling back to basic implementation. Make sure GOOGLE_API_KEY is set.")
+    print("Falling back to basic implementation. Make sure ANTHROPIC_API_KEY is set.")
     
     # Fallback implementation
     class AppGraphWrapper:
         def invoke(self, inputs: Dict):
             return {
-                "messages": ["Agent not available. Please set GOOGLE_API_KEY."],
+                "messages": ["Agent not available. Please set ANTHROPIC_API_KEY."],
                 "role": inputs.get("role", ""),
                 "seniority": inputs.get("seniority", ""),
                 "tech_stack": inputs.get("tech_stack", ""),

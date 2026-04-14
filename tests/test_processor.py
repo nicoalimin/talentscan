@@ -44,7 +44,7 @@ def test_extract_text_from_docx(tmp_path):
 
 
 def test_extract_structured_data_missing_api_key(monkeypatch):
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     result = processor.extract_structured_data("Some resume text")
 
@@ -52,7 +52,7 @@ def test_extract_structured_data_missing_api_key(monkeypatch):
 
 
 def test_extract_structured_data_with_stubs(monkeypatch):
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
     class FakeModel:
         def __init__(self, data):
@@ -95,9 +95,9 @@ def test_extract_structured_data_with_stubs(monkeypatch):
             return FakeChain(handler)
 
     class FakeLLM:
-        def __init__(self, model, google_api_key, temperature):
+        def __init__(self, model, anthropic_api_key, temperature):
             self.model = model
-            self.google_api_key = google_api_key
+            self.anthropic_api_key = anthropic_api_key
             self.temperature = temperature
 
         def generate(self, text):
@@ -105,7 +105,7 @@ def test_extract_structured_data_with_stubs(monkeypatch):
 
     monkeypatch.setattr(processor, "PydanticOutputParser", FakeParser)
     monkeypatch.setattr(processor, "PromptTemplate", FakePrompt)
-    monkeypatch.setattr(processor, "ChatGoogleGenerativeAI", FakeLLM)
+    monkeypatch.setattr(processor, "ChatAnthropic", FakeLLM)
 
     result = processor.extract_structured_data("Resume text")
 
